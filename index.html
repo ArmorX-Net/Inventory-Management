@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ArmorX Inventory</title>
+<meta name="theme-color" content="#1b2328">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ArmorX Scan">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <div class="brand"><i></i>ArmorX Inventory</div>
+  <nav class="tabs" id="tabs">
+    <a href="#dashboard">Dashboard</a>
+    <a href="#scan">Scan station</a>
+    <a href="#batches">Batches &amp; labels</a>
+    <a href="#stock">Stock</a>
+    <a href="#racks">Rack map</a>
+    <a href="#print">Setup labels</a>
+    <a href="#log">Scan log</a>
+    <a href="#settings">Settings</a>
+  </nav>
+  <span class="demo-pill" id="demoPill">DEMO · data stays in this browser</span>
+</div></header>
+<main id="app"></main>
+<div id="print-area"></div>
+<script src="vendor/JsBarcode.all.min.js"></script>
+<script src="data/doornets.js"></script>
+<script src="app.js"></script>
+<script src="vendor/zxing.min.js" defer></script>
+<script src="cam.js"></script>
+</body>
+</html>
