@@ -302,11 +302,12 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     h('<h2>Scan station</h2><div class="station"><div class="scanbox">' +
       '<div class="who">Scanning as <span class="name" id="who">—</span><span class="muted small" id="whoRole"></span></div>' +
       '<label class="me">I am <select id="meSel"><option value="">— pick your name —</option>' + S.workers.map(function (w) { return '<option value="' + esc(w.id) + '"' + (w.id === sess.emp ? ' selected' : '') + '>' + esc(w.name.replace(' (sample)', '')) + ' · ' + esc(w.role) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="acts" id="acts"></div>' +
       '<button type="button" class="btn camBtn" id="camBtn">Scan with camera</button>' +
       '<div class="prompt" id="prompt"></div>' +
       '<input id="scanIn" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Scan here…" aria-label="Scan input">' +
       '<div class="feedback" id="fb" role="status">Ready.</div>' +
-      '<div id="adjust"></div>' +
+      '<div id="adjust"></div><div id="qbar"></div>' +
       '<div class="small" style="color:#cfd6db">' + (TOUCH ? 'Tap <b>Scan with camera</b> and point at the label. You can also type a code and press Enter.' : 'Keep this box selected. The scanner types the code and presses Enter. You can also type a code and press Enter.') + '</div></div>' +
       '<details class="card"' + (TOUCH ? '' : ' open') + '><summary><h3 style="display:inline">Test without a scanner</h3></summary><div class="small muted">Tap a code to send it as if it were scanned.</div>' +
       '<div class="small"><b>1 · Worker badge</b></div><div class="sim" id="simW"></div>' +
@@ -326,6 +327,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (!TOUCH) document.addEventListener('click', refocus);
     document.getElementById('meSel').onchange = function () { var v = this.value || null; sess.emp = v; S.settings.me = v; sess.mode = null; sess.await = null; save(); if (v) fb('Hello ' + esc(wname(v)) + '.', 'ok'); paint(); };
     document.getElementById('camBtn').onclick = function () { if (window.ArmorXCam) window.ArmorXCam.open(handle); };
+    document.getElementById('acts').onclick = function (e) { var b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); var a = b.dataset.act;
+      if (a === 'CANCEL' || a === sess.mode) handle('CMD-CANCEL'); else handle('CMD-' + a); if (!TOUCH) refocus(); };
+    document.getElementById('qbar').onclick = function (e) { var b = e.target.closest('[data-q]'); if (!b) return; e.stopPropagation(); handle(b.dataset.q); if (!TOUCH) refocus(); };
     function sim(id, codes) { var el = document.getElementById(id); el.innerHTML = codes.map(function (c) { return '<button type="button" data-c="' + esc(c[0]) + '" title="' + esc(c[1] || '') + '">' + esc(c[0]) + (c[1] ? ' · ' + esc(c[1]) : '') + '</button>'; }).join(''); }
     sim('simW', S.workers.map(function (w) { return [w.id, w.name.replace(' (sample)', '')]; }));
     sim('simB', Object.values(S.batches).filter(function (b) { return b.stage < 6; }).slice(-6).map(function (b) { return [b.id, SHORT[b.stage + 1] + ' next']; }));
@@ -348,9 +352,32 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       else if (sess.await === 'color') p = 'Which color? Tap Black, Brown or Grey below';
       else if (sess.await === 'qty') p = esc({ OUT: 'How many going out?', FBA: 'How many for FBA?', RETURN: 'How many returned?', DAMAGED: 'How many damaged?', COUNT: 'How many in total, racks plus second floor?' }[sess.mode]) + ' <span class="small">' + esc(netLabel(sess.net)) + ' · type a number or scan QTY</span>';
       else if (sess.mode) p = esc(sess.mode + ' mode · ' + MODE_HELP[sess.mode]);
-      else p = 'Scan a batch label, a box label or a command';
+      else p = 'Scan a box label or a batch label';
     }
     document.getElementById('prompt').innerHTML = p;
+    var acts = document.getElementById('acts');
+    if (acts) acts.innerHTML = sess.emp ? '<div class="acts-h">' + (sess.mode ? 'Doing: <b>' + esc(ACTS[sess.mode]) + '</b> · tap again to stop' : 'What are you doing? Tap one, or just scan a box and the app will ask') + '</div><div class="acts-g">' +
+      ACT_ORDER.map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
+    var qb = document.getElementById('qbar');
+    if (qb) qb.innerHTML = sess.await === 'qty' ? '<div class="qbtns">' + [1, 2, 3, 4, 5, 10, 20].map(function (q) { return '<button type="button" class="act" data-q="' + q + '">' + q + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>' : '';
+  }
+  var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count' };
+  var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT'];
+  function boxActions(code, box, list) { // scan first, choose after: the actions that make sense for this box
+    if (code === FLOOR2 || !box) return ['OUT', 'FBA', 'RETURN', 'COUNT'];
+    var empty = isEmpty(code), n = list[0];
+    if (box.role === 'backup') return empty ? ['REFILL', 'COUNT'] : ['SWAP', 'EMPTY', 'FBA', 'COUNT'];
+    if (box.kind === 'bin') return ['OUT', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT'];
+    if (empty) return [(n.backups || []).length ? 'SWAP' : 'REFILL', (n.backups || []).length ? 'REFILL' : null, 'RETURN', 'COUNT'].filter(Boolean);
+    return ['OUT', 'EMPTY', (n.backups || []).length ? 'SWAP' : 'REFILL', 'FBA', 'RETURN', 'DAMAGED', 'COUNT'];
+  }
+  function askAction(code, box, list, r) {
+    var adj = document.getElementById('adjust'); if (!adj) return;
+    if (window.ArmorXCam) window.ArmorXCam.close();
+    var info = list.length > 1 ? list[0].size + ' (3 bins)' : netLabel(list[0]);
+    fb('<code>' + esc(code) + '</code> · ' + (box.role === 'pick' ? 'PICK box' : 'BACKUP box') + ' · ' + esc(info) + (list.length === 1 ? ' · ' + onHand(list[0].id) + ' in total' : '') + (r ? ' · ' + (r.state === 'empty' ? '<b>marked empty</b>' : 'made ' + esc(fmtD(r.made))) : '') + '. <b>What are you doing?</b>', 'ok');
+    adj.innerHTML = '<div class="acts-g">' + boxActions(code, box, list).map(function (a, i) { return '<button type="button" class="act' + (i === 0 ? ' on' : '') + '" data-do="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>';
+    adj.querySelectorAll('[data-do]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); adj.innerHTML = ''; handle('CMD-' + b.dataset.do); scanBox(code); if (!TOUCH) refocus(); }; });
   }
   function handle(raw) {
     var code = String(raw || '').trim().toUpperCase();
@@ -448,8 +475,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (list.length > 1) { chooseColor(code, list); return; }
       pickedNet(list[0], box ? code : list[0].pick); return;
     }
-    var info = list.map(function (n) { return esc(netLabel(n)) + ' · <b>' + onHand(n.id) + '</b>'; }).join(' · ');
     var r = boxRec(code);
+    if (box) { askAction(code, box, list, r); return; }
+    var info = list.map(function (n) { return esc(netLabel(n)) + ' · <b>' + onHand(n.id) + '</b>'; }).join(' · ');
     fb('<code>' + esc(code) + '</code> · ' + (box ? (box.role === 'pick' ? 'PICK box' : 'BACKUP box') + (box.kind === 'bin' ? ' (3 bins)' : '') + ' · ' : '') + info + (r ? ' · ' + (r.state === 'empty' ? 'empty' : 'made ' + esc(fmtD(r.made))) : '') + '. Scan OUT, FBA, SWAP, REFILL or COUNT first.', 'warn');
   }
   function pickedNet(n, code) {

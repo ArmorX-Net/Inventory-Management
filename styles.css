@@ -187,3 +187,11 @@ body.cam-on{overflow:hidden}
 .sheet table{width:100%;border-collapse:collapse}
 .sheet th,.sheet td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
 @media print{#print-area .sheet{color:#111;font-family:Arial,sans-serif;font-size:9pt}#print-area .sheet th,#print-area .sheet td{border:1px solid #999;padding:3px 5px}#print-area .sheet tr{break-inside:avoid}}
+/* in-app actions on the scan station */
+.acts-h{color:#cfd6db;font-size:.9rem;margin-bottom:6px}
+.acts-g,.qbtns{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.qbtns{grid-template-columns:repeat(4,1fr)}
+.act{font:inherit;font-weight:600;font-size:.95rem;min-height:48px;padding:8px 6px;border-radius:4px;border:2px solid #556;background:#26323a;color:#fff;cursor:pointer;line-height:1.15}
+.act.on{background:var(--tag);border-color:var(--tag);color:#111}
+.act.ghost{background:transparent}
+@media (max-width:600px){.acts-g{grid-template-columns:repeat(2,1fr)}.act{min-height:52px}}
