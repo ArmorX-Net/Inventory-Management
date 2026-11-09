@@ -419,17 +419,17 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
 
   // ---------- rack map ----------
   function viewRacks() {
-    var sides = window.SIDES || [];
+    var sides = window.SIDES || [], COLS = window.RACK_COLS || 6;
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Rack map</h2><label class="f">Find a net<input id="rq" placeholder="e.g. 205x90"></label></div>' +
       '<div class="legend"><span><i style="background:var(--soft-ok)"></i>Healthy</span><span><i style="background:var(--soft-warn)"></i>Below refill level</span><span><i style="background:var(--soft-bad)"></i>Empty</span><span><i style="border:1px dashed var(--line)"></i>Reserve (row 6) / free</span></div>' +
       '<div class="card small" id="boxInfo">Tap a box to see what is in it.</div><div class="sides" id="sides"></div>');
     var out = '';
     sides.forEach(function (s) {
       out += '<div class="side"><div><span class="tag' + (/R$/.test(s) ? ' r' : '') + '">' + s + '</span> <span class="small muted">Rack ' + s[0] + ', ' + (/R$/.test(s) ? 'right' : 'left') + ' side</span></div><div class="rack"><div></div>';
-      for (var c = 1; c <= 9; c++) out += '<div class="h">C' + c + '</div>';
+      for (var c = 1; c <= COLS; c++) out += '<div class="h">C' + c + '</div>';
       for (var r = 6; r >= 1; r--) {
         out += '<div class="h">R' + r + '</div>';
-        for (var c2 = 1; c2 <= 9; c2++) {
+        for (var c2 = 1; c2 <= COLS; c2++) {
           var code = s + '-C' + c2 + '-R' + r, n = BY_BOX[code];
           if (!n) { out += '<div class="bx free" data-b="' + code + '">' + (r === 6 ? '' : '·') + '</div>'; continue; }
           var cls = r === 6 ? 'res' : status(n);
