@@ -16,8 +16,10 @@ var TABS = {
   Batches: ['Batch', 'Net ID', 'Net', 'Qty', 'Good', 'Current step', 'Step no', 'Created', 'Created by', 'Box',
             'Cutting by', 'Cutting at', 'Base by', 'Base at', 'Sides by', 'Sides at', 'Finish by', 'Finish at', 'Packing by', 'Packing at', 'Rack-in by', 'Rack-in at', 'Rejected total'],
   Stock:   ['Net ID', 'Net', 'On hand', 'Last change', 'Last change at'],
-  Workers: ['Badge', 'Name', 'Main step']
+  Workers: ['Badge', 'Name', 'Main step'],
+  Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By']
 };
+// Layout v7: every box slot on racks A-C. "empty" boxes are on the refill list; Made drives first made, first shipped.
 
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -72,7 +74,9 @@ function doGet(e) {
   var rates = {};
   var nets = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Nets');
   if (nets && nets.getLastRow() > 1) nets.getRange(2, 1, nets.getLastRow() - 1, 4).getValues().forEach(function (r) { if (r[0]) rates[r[0]] = Number(r[3]) || 0; });
-  return json_({ ok: true, stock: stock, batches: batches, workers: workers, log: log, rates: rates, at: new Date().toISOString() });
+  var boxes = {};
+  rows_('Boxes').forEach(function (r) { if (r[0]) boxes[r[0]] = { state: r[1] || 'full', net: r[2] || '', wo: r[3] || '', made: iso_(r[4]) || null, at: iso_(r[5]), by: r[6] || '' }; });
+  return json_({ ok: true, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, at: new Date().toISOString() });
 }
 function iso_(v) { return (v && typeof v.getTime === 'function') ? new Date(v.getTime()).toISOString() : (v ? String(v) : ''); }
 
@@ -127,6 +131,16 @@ function apply_(ev, station) {
       if (ev.rej) sh.getRange(b.row, 23).setValue((Number(b.values[22]) || 0) + Number(ev.rej));
     }
     if (ev.type === 'IN') stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t);
+    if (ev.type === 'IN' && ev.loc && ev.loc !== '2F') box_(ev.loc, 'full', ev.net, ev.wo, ev.made, t, ev.who);
+  } else if (ev.type === 'SWAP') {
+    var from = findRow_('Boxes', ev.loc);
+    var v = from ? from.values : [ev.loc, 'full', ev.net || '', '', ev.made || ''];
+    if (ev.to) box_(ev.to, 'full', v[2], v[3], v[4], t, ev.who);
+    box_(ev.loc, 'empty', '', '', '', t, ev.who);
+  } else if (ev.type === 'REFILL') {
+    box_(ev.loc, 'full', ev.net || '', ev.wo || '', ev.made || '', t, ev.who);
+  } else if (ev.type === 'EMPTY') {
+    box_(ev.loc, 'empty', '', '', '', t, ev.who);
   } else if (ev.type === 'ADJUST') {
     var b2 = findRow_('Batches', ev.wo);
     if (b2) {
@@ -152,4 +166,12 @@ function stock_(id, name, qty, mode, why, t) {
   } else {
     sh.appendRow([id, name || '', mode === 'set' ? qty : qty, why, t]);
   }
+}
+
+function box_(loc, state, net, wo, made, t, who) {
+  if (!loc) return;
+  var sh = sheet_('Boxes'), b = findRow_('Boxes', loc);
+  var row = [loc, state, net || '', wo || '', made ? new Date(made) : '', t, workerName_(who)];
+  if (b) sh.getRange(b.row, 1, 1, row.length).setValues([row]);
+  else sh.appendRow(row);
 }

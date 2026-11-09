@@ -162,3 +162,21 @@ details.card[open]>summary::after{content:" \2212"}
 .cam-msg.ok{background:#1f5c38}.cam-msg.bad{background:#7d2424}.cam-msg.warn{background:#7a5414}
 body.cam-on{overflow:hidden}
 @media (max-width:600px){.top-in{gap:0 8px;min-height:44px}.brand{font-size:1.15rem}.demo-pill{order:2}nav.tabs{order:3;flex:1 1 100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;margin:0 -16px;padding:0 10px}nav.tabs a{padding:10px 9px;white-space:nowrap}.scanbox input{font-size:1.2rem}.scanbox{padding:14px}}
+/* layout v7: backups, 3-bin boxes, side signs */
+.rack .bx.bkp{border:1px dashed currentColor;background:transparent}
+.stripe.bins{background:linear-gradient(90deg,#111 0 33.3%,#7a4b2a 33.3% 66.6%,repeating-linear-gradient(90deg,#999 0 2mm,#ddd 2mm 4mm) 66.6% 100%)}
+.lbl-loc .role{font-weight:700}
+.lbl-loc.backup{background:repeating-linear-gradient(135deg,#fff 0 3mm,#eee 3mm 6mm)}
+.lbl-loc.backup .role{border:1px solid #111;padding:0 1mm}
+.lbl-batch .made{font-family:var(--f-display);font-weight:700;font-size:13pt}
+.colorbtn{display:inline-flex;align-items:center;gap:6px;font-size:1rem;padding:10px 14px}
+.signs-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.sign{background:#fff;color:#111;border:2px solid #111;padding:16px;display:flex;flex-direction:column;gap:10px;break-after:page;page-break-after:always}
+.sign .sg-side{font-family:var(--f-display);font-weight:700;font-size:64pt;line-height:.9;background:#f6c400;color:#111;align-self:flex-start;padding:0 12px}
+.sign .sg-side.r{background:#2f6fb0;color:#fff}
+.sign .sg-rng{font-family:var(--f-display);font-weight:700;font-size:44pt;line-height:1;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.sign .sg-rng span{font-size:20pt;color:#555}
+.sign .sg-star{font-family:var(--f-display);font-size:20pt;font-weight:600;background:#f8c9a3;padding:4px 10px;align-self:flex-start}
+.sign .sg-rules{display:flex;flex-wrap:wrap;gap:6px 18px;font-family:var(--f-mono);font-size:11pt}
+.signs-preview .sign .sg-side{font-size:32pt}.signs-preview .sign .sg-rng{font-size:22pt}.signs-preview .sign .sg-rng span{font-size:12pt}.signs-preview .sign .sg-star{font-size:12pt}.signs-preview .sign .sg-rules{font-size:8pt}
+@media print{#print-area .sign{width:277mm;height:190mm;justify-content:center;gap:24px}#print-area .sign .sg-side{font-size:120pt}#print-area .sign .sg-rng{font-size:90pt}#print-area .sign .sg-rng span{font-size:36pt}#print-area .sign .sg-star{font-size:30pt}#print-area .sign .sg-rules{font-size:16pt}}

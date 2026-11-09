@@ -18,36 +18,39 @@ A simple inventory and production tracker for ArmorX doornets. It runs in any br
 
 Workers are listed in the sheet's **Workers** tab (Badge, Name, Main step). Sales per day comes from the sheet's **Nets** tab.
 
+## Rack layout (v7, final for the 2-week trial)
+
+See [LAYOUT.md](LAYOUT.md). In short: doornets on racks A–C, sizes in number order, popular sizes on R2–R4, slow sizes on R1/R5, R6 backup only, 210×100 in AR columns 1–3 (pick from R3). Colors always Black, Brown, Grey left to right. `2F` is the second floor.
+
 ## Daily flow
 
 | Step | Who | Scans |
 |---|---|---|
-| Create batch | Manager | Batches → pick size, color, qty → **Create & print label** (100 × 50 mm) |
-| Cutting | Cutter | batch label (phone) or badge → batch label (USB scanner) |
-| Stitching · base | Stitcher 1 | badge → batch label |
-| Stitching · sides | Stitcher 2 | badge → batch label |
-| Final finishing | Stitcher 3 | badge → batch label |
-| Packing | Packer | badge → batch label |
-| Rack-in | Rack person | badge → batch label → box label (system checks it is the right box) |
-| Ship an order | Picker | badge → `CMD-OUT` → box label → quantity |
-| FBA shipment | Picker | badge → `CMD-FBA` → box label → quantity |
-| Return | Anyone | badge → `CMD-RETURN` (or `CMD-DAMAGED`) → box label → quantity |
-| Fix a count | Anyone | badge → `CMD-COUNT` → box label → counted quantity |
+| Create batch | Manager | Batches → pick size, color, qty → **Create & print label** (100 × 50 mm). **Box tags** prints one copy per 20 nets, with the production date. |
+| Cutting … Packing | Each worker | badge (or "I am" on the phone) → batch label |
+| Rack-in | Rack person | batch label → `2F` (second floor) or an **empty** home box. A box that still has older nets is refused (first made, first shipped). |
+| Ship an order | Picker | `CMD-OUT` → **pick box** (3-bin box: tap the color) → quantity. Backup boxes are refused. |
+| FBA shipment | Picker | `CMD-FBA` → box label → quantity |
+| Pick box empty | Picker | `CMD-SWAP` → the backup box brought down (oldest first). No backup: `CMD-EMPTY` → the box. |
+| Refill every 3–4 days | Rack person | **Refill list** tab → fill each empty box from the oldest second-floor batch → `CMD-REFILL` → the box |
+| Return | Anyone | `CMD-RETURN` (or `CMD-DAMAGED`) → pick box → quantity |
+| Fix a count | Anyone | `CMD-COUNT` → any box of the net → total quantity (racks + second floor) |
 
 If nets are rejected at a step, type the good count and press Enter right after the scan.
 
 ## Labels (all Code 128)
 
-* **Batch label** 100 × 50 mm: one per batch, travels through every step.
-* **Box labels** 50 × 25 mm: one per rack box, code like `AR-C1-R3` (rack A, right side, column 1, row 3). Row 6 = reserve (25 nets).
+* **Batch label / box tag** 100 × 50 mm: batch number, size, color and **production date**. One goes on each box filled from the batch.
+* **Shelf labels** 50 × 25 mm: one per box slot, stuck on the shelf edge and never moved. Code like `AR-C1-R3`, with size, color (or BLACK | BROWN | GREY for a 3-bin box) and PICK or BACKUP (striped).
+* **Side signs** A4: side letter and size range, one at the end of each side.
 * **Worker badges** 50 × 25 mm: `EMP-01` …
-* **Command sheet** 50 × 25 mm: OUT, FBA, RETURN, DAMAGED, COUNT, CANCEL, QTY-1/5/10/20/25.
+* **Command sheet** 50 × 25 mm: OUT, FBA, SWAP, REFILL, EMPTY, RETURN, DAMAGED, COUNT, CANCEL, QTY-1/5/10/20/25 and the `2F` location.
 
-Print from **Setup labels**. In the print dialog choose the thermal printer, set the paper size to the label size and margins to none.
+Print from **Setup labels**. In the print dialog choose the thermal printer, set the paper size to the label size and margins to none (side signs: A4 landscape).
 
 ## Files
 
 * `index.html`, `styles.css`, `app.js`: the app.
-* `data/doornets.js`: the 234 doornets (78 sizes × Black/Brown/Grey) with rack locations, box counts and refill levels, generated from Amazon sales (YTD to 20 Oct 2026, 90 and 30 days to 27 Oct). Classic and Royal share one stock.
+* `data/doornets.js`: layout v7. The 234 doornets (78 sizes × Black/Brown/Grey) with pick box, backup boxes and refill levels, plus every box slot (`BOXES`), side ranges and the 210×100 exception. Generated from Amazon sales (YTD to 20 Oct 2026, 90 and 30 days to 27 Oct). Classic and Royal share one stock.
 * `google-sheet/Code.gs` and `SETUP.md`: the Google Sheet backend and how to set it up.
 * `vendor/JsBarcode.all.min.js`: barcode library (MIT, JsBarcode 3.11.6).
