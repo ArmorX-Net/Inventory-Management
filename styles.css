@@ -180,3 +180,10 @@ body.cam-on{overflow:hidden}
 .sign .sg-rules{display:flex;flex-wrap:wrap;gap:6px 18px;font-family:var(--f-mono);font-size:11pt}
 .signs-preview .sign .sg-side{font-size:32pt}.signs-preview .sign .sg-rng{font-size:22pt}.signs-preview .sign .sg-rng span{font-size:12pt}.signs-preview .sign .sg-star{font-size:12pt}.signs-preview .sign .sg-rules{font-size:8pt}
 @media print{#print-area .sign{width:277mm;height:190mm;justify-content:center;gap:24px}#print-area .sign .sg-side{font-size:120pt}#print-area .sign .sg-rng{font-size:90pt}#print-area .sign .sg-rng span{font-size:36pt}#print-area .sign .sg-star{font-size:30pt}#print-area .sign .sg-rules{font-size:16pt}}
+
+/* count sheet and pick list */
+.cin{width:80px;padding:4px 6px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink)}
+.sheet h3{margin:6px 0}
+.sheet table{width:100%;border-collapse:collapse}
+.sheet th,.sheet td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
+@media print{#print-area .sheet{color:#111;font-family:Arial,sans-serif;font-size:9pt}#print-area .sheet th,#print-area .sheet td{border:1px solid #999;padding:3px 5px}#print-area .sheet tr{break-inside:avoid}}

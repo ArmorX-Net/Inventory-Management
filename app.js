@@ -185,9 +185,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     nodes.forEach(function (n) { area.appendChild(n); });
     var st = document.getElementById('page-size');
     if (!st) { st = document.createElement('style'); st.id = 'page-size'; document.head.appendChild(st); }
-    var dim = size === '50x25' ? '50mm 25mm' : size === 'A4' ? 'A4 landscape' : '100mm 50mm';
-    st.textContent = '@page{size:' + dim + ';margin:' + (size === 'A4' ? '10mm' : '0') + '}';
-    toast('Opening print dialog: pick the thermal printer and paper ' + dim.replace(/ /, ' × ') + ', margins none.');
+    var dim = size === '50x25' ? '50mm 25mm' : size === 'A4' ? 'A4 landscape' : size === 'A4P' ? 'A4 portrait' : '100mm 50mm';
+    st.textContent = '@page{size:' + dim + ';margin:' + (/^A4/.test(size) ? '10mm' : '0') + '}';
+    toast(/^A4/.test(size) ? 'Opening print dialog: normal printer, ' + dim + '.' : 'Opening print dialog: pick the thermal printer and paper ' + dim.replace(/ /, ' × ') + ', margins none.');
     setTimeout(function () { try { window.print(); } catch (e) {} }, 150);
   }
 
@@ -503,17 +503,85 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
 
   // ---------- stock ----------
+  function walkSorted() { return NETS.slice().sort(function (a, b) { return sideOrder(a.pick, b.pick) || COLORS.indexOf(a.color) - COLORS.indexOf(b.color); }); }
   function viewStock() {
-    h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label></div>' +
-      '<div class="tablewrap"><table><thead><tr><th>Net</th><th>Rack location</th><th>On hand</th><th>Space</th><th>Refill at</th><th>Sells / day</th><th>Days left</th><th>Status</th><th>Amazon SKUs</th></tr></thead><tbody id="tb"></tbody></table></div>');
+    h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><div class="row" style="align-items:flex-end"><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label><button class="btn" id="cntPrint">Print count sheet</button><button class="btn primary" id="cntMode">Enter counts</button></div></div>' +
+      '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted on the racks and on the second floor (2F). Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is.</div>' +
+      '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span><button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
+    var counting = false;
     function draw() {
       var q = document.getElementById('q').value.trim().toLowerCase();
-      document.getElementById('tb').innerHTML = NETS.filter(function (n) { return !q || (n.size + ' ' + n.color + ' ' + n.home + ' ' + n.skus).toLowerCase().indexOf(q) >= 0; }).map(function (n) {
+      var list = walkSorted().filter(function (n) { return !q || (n.size + ' ' + n.color + ' ' + n.home + ' ' + n.skus).toLowerCase().indexOf(q) >= 0; });
+      document.getElementById('th').innerHTML = counting ? '<tr><th>Pick box</th><th>Net</th><th>In system</th><th>Counted on racks</th><th>Counted on 2F</th><th>New total</th></tr>'
+        : '<tr><th>Net</th><th>Rack location</th><th>In total</th><th>Rack space</th><th>Refill at</th><th>Sells / day</th><th>Days left</th><th>Status</th><th>Amazon SKUs</th></tr>';
+      document.getElementById('tb').innerHTML = list.map(function (n) {
         var oh = onHand(n.id), st = status(n), days = n.perDay ? Math.floor(oh / n.perDay) : '—';
+        if (counting) return '<tr data-id="' + n.id + '"><td><code>' + esc(n.pick) + '</code></td><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + (n.kind === 'bin' ? ' <span class="small muted">(3 bins)</span>' : '') + '</td><td>' + oh + '</td><td><input class="cin" data-k="r" type="number" min="0" inputmode="numeric"></td><td><input class="cin" data-k="f" type="number" min="0" inputmode="numeric"></td><td class="tot muted">—</td></tr>';
         return '<tr><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><code>' + esc(n.home) + '</code></td><td><b>' + oh + '</b></td><td>' + n.cap + '</td><td>' + n.refillAt + '</td><td>' + (n.perDay || '—') + '</td><td>' + days + '</td><td><span class="pill ' + (st === 'out' ? 'p-bad">Out' : st === 'low' ? 'p-warn">Low' : 'p-ok">OK') + '</span></td><td class="muted small">' + esc(n.skus) + '</td></tr>';
       }).join('');
+      if (counting) app.querySelectorAll('#tb tr').forEach(function (tr) {
+        tr.querySelectorAll('.cin').forEach(function (inp) { inp.oninput = function () {
+          var r = tr.querySelector('[data-k=r]').value, f = tr.querySelector('[data-k=f]').value;
+          tr.querySelector('.tot').textContent = (r === '' && f === '') ? '—' : (Number(r || 0) + Number(f || 0));
+        }; });
+      });
     }
+    function setMode(on) { counting = on; ['cntHelp', 'cntBar'].forEach(function (id) { document.getElementById(id).hidden = !on; }); document.getElementById('cntMode').hidden = on; draw(); }
+    document.getElementById('cntMode').onclick = function () { setMode(true); };
+    document.getElementById('cntCancel').onclick = function () { setMode(false); };
+    document.getElementById('cntSave').onclick = function () {
+      var who = sess.emp || S.settings.me || 'MANAGER', k = 0;
+      app.querySelectorAll('#tb tr').forEach(function (tr) {
+        var r = tr.querySelector('[data-k=r]').value, f = tr.querySelector('[data-k=f]').value;
+        if (r === '' && f === '') return;
+        var n = BY_ID[tr.dataset.id], before = onHand(n.id), tot = Number(r || 0) + Number(f || 0);
+        S.stock[n.id] = tot; k++;
+        addLog({ type: 'COUNT', who: who, net: n.id, qty: tot, loc: n.pick, note: 'Count sheet: racks ' + Number(r || 0) + ' + 2F ' + Number(f || 0) + ' (was ' + before + ')' });
+      });
+      save(); toast(k ? k + ' counts saved.' : 'Nothing filled in.'); setMode(false);
+    };
+    document.getElementById('cntPrint').onclick = function () {
+      var t = document.createElement('div'); t.className = 'sheet';
+      t.innerHTML = '<h3>ArmorX doornet count sheet · ' + esc(new Date().toLocaleDateString()) + ' · counted by ____________</h3><table><thead><tr><th>Pick box</th><th>Net</th><th>Backups</th><th>Racks</th><th>2F</th><th>Total</th></tr></thead><tbody>' +
+        walkSorted().map(function (n) { return '<tr><td>' + esc(n.pick) + '</td><td>' + esc(netLabel(n)) + (n.kind === 'bin' ? ' (bin)' : '') + '</td><td>' + esc((n.backups || []).join(' ')) + '</td><td></td><td></td><td></td></tr>'; }).join('') + '</tbody></table>';
+      printLabels([t], 'A4P');
+    };
     document.getElementById('q').oninput = draw; draw();
+  }
+
+  // ---------- pick list: paste today's self-ship orders, get them in walking order ----------
+  var SKU_MAP = null;
+  function skuMap() {
+    if (SKU_MAP) return SKU_MAP; SKU_MAP = {};
+    NETS.forEach(function (n) { String(n.skus || '').split(',').forEach(function (k) { k = k.trim().toUpperCase(); if (k) { SKU_MAP[k] = n; SKU_MAP['FC-' + k] = n; } }); SKU_MAP[n.id] = n; });
+    return SKU_MAP;
+  }
+  function findNet(line) {
+    var up = line.toUpperCase(), toks = up.split(/[\t,;| ]+/).filter(Boolean), m = skuMap(), n = null;
+    for (var i = 0; i < toks.length && !n; i++) if (m[toks[i]]) n = m[toks[i]];
+    if (!n) { var sz = /(\d{3})\s*[X×*]\s*(\d{2,3})/.exec(up), col = /BLACK|BROWN|GR[AE]Y/.exec(up);
+      if (sz && col) { var c = col[0][0] === 'B' ? (col[0] === 'BLACK' ? 'Black' : 'Brown') : 'Grey'; n = NETS.filter(function (x) { return x.size === sz[1] + 'x' + sz[2] && x.color === c; })[0] || null; } }
+    var nums = toks.filter(function (t) { return /^\d{1,3}$/.test(t); });
+    return { net: n, qty: nums.length ? parseInt(nums[nums.length - 1], 10) : 1 };
+  }
+  function viewPick() {
+    h('<h2>Pick list</h2><div class="note small">Paste today\'s self-ship orders (Easyship, Seller Flex, website): one line per order item, with the SKU (or size and color, e.g. "210x100 Black") and the quantity. Copying the SKU and Quantity columns from the Amazon order report works. The list comes back in walking order: AR → AL → BR → BL → CR → CL.</div>' +
+      '<textarea id="pIn" rows="8" style="width:100%;font-family:var(--f-mono);padding:8px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink)" placeholder="MQDR-210x100-BK\t2&#10;MQ-DR-205x90-GR\t1&#10;200x100 Brown 1"></textarea>' +
+      '<div class="row"><button class="btn primary" id="pGo">Make pick list</button><button class="btn" id="pPrint" hidden>Print</button></div><div id="pOut"></div>');
+    var lastNode = null;
+    document.getElementById('pGo').onclick = function () {
+      var lines = document.getElementById('pIn').value.split(/\n/).map(function (x) { return x.trim(); }).filter(Boolean), tot = {}, bad = [];
+      lines.forEach(function (l) { var r = findNet(l); if (!r.net) { bad.push(l); return; } tot[r.net.id] = (tot[r.net.id] || 0) + r.qty; });
+      var rows = Object.keys(tot).map(function (id) { return BY_ID[id]; }).sort(function (a, b) { return sideOrder(a.pick, b.pick) || COLORS.indexOf(a.color) - COLORS.indexOf(b.color); });
+      var units = rows.reduce(function (a, n) { return a + tot[n.id]; }, 0);
+      var html = '<div class="sheet"><h3>Pick list · ' + esc(new Date().toLocaleDateString()) + ' · ' + units + ' nets · picker ____________</h3><table><thead><tr><th>✓</th><th>Box</th><th>Net</th><th>Qty</th><th>In system</th></tr></thead><tbody>' +
+        rows.map(function (n) { var short = onHand(n.id) < tot[n.id]; return '<tr><td>☐</td><td><b>' + esc(n.pick) + '</b></td><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + (n.kind === 'bin' ? ' (3-bin box)' : '') + '</td><td><b>' + tot[n.id] + '</b></td><td>' + onHand(n.id) + (short ? ' <b>SHORT</b>' : '') + '</td></tr>'; }).join('') + '</tbody></table>' +
+        '<p class="small">Scan <b>OUT</b> once, then for each line: the box label, then the quantity (QTY label or type it).</p></div>' +
+        (bad.length ? '<div class="note small"><b>Not recognised (' + bad.length + '):</b><br>' + bad.map(esc).join('<br>') + '</div>' : '');
+      document.getElementById('pOut').innerHTML = html; lastNode = document.querySelector('#pOut .sheet');
+      document.getElementById('pPrint').hidden = !rows.length;
+    };
+    document.getElementById('pPrint').onclick = function () { if (lastNode) printLabels([lastNode.cloneNode(true)], 'A4P'); };
   }
 
   // ---------- rack map ----------
@@ -705,7 +773,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }, 20000);
 
   // ---------- router ----------
-  var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, print: viewPrint, log: viewLog, settings: viewSettings };
+  var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, log: viewLog, settings: viewSettings };
   function route() {
     document.removeEventListener('click', refocus);
     var k = (location.hash || '#dashboard').slice(1); if (!VIEWS[k]) k = 'dashboard';
