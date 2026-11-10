@@ -180,8 +180,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     nodes.forEach(function (n) { area.appendChild(n); });
     var st = document.getElementById('page-size');
     if (!st) { st = document.createElement('style'); st.id = 'page-size'; document.head.appendChild(st); }
-    var dim = size === '50x25' ? '50mm 25mm' : size === 'A4' ? 'A4 landscape' : size === 'A4P' ? 'A4 portrait' : '100mm 50mm';
-    st.textContent = '@page{size:' + dim + ';margin:' + (/^A4/.test(size) ? '10mm' : '0') + '}';
+    var dim = size === '50x25' ? '50.3mm 25.1mm' : size === 'A4' ? 'A4 landscape' : size === 'A4P' ? 'A4 portrait' : '100mm 50mm';
+    st.textContent = '@page{size:' + dim + ';margin:' + (/^A4/.test(size) ? '10mm' : '0.25mm 0.25mm 0 0.25mm') + '}'; // 50x25: same page and margins as the ArmorX Word label template (2850 x 1425 twips)
     toast(/^A4/.test(size) ? 'Opening print dialog: normal printer, ' + dim + '.' : 'Opening print dialog: pick the thermal printer and paper ' + dim.replace(/ /, ' × ') + ', margins none.');
     setTimeout(function () { try { window.print(); } catch (e) {} }, 150);
   }

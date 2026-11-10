@@ -218,3 +218,16 @@ body.cam-on{overflow:hidden}
 details.pv{margin-top:8px}
 details.pv>summary{cursor:pointer;font-size:.9rem;color:var(--accent-text);padding:4px 0}
 details.pv[open]>summary{margin-bottom:8px}
+/* THERMAL LABELS (50 x 25 mm), matched to the ArmorX Word label template (MQ_Label / Packaging_Label V.9):
+   page 50.3 x 25.1 mm, 0.25 mm margins, one fixed 49.8 x 24.9 mm box, Calibri, bold, centered, big barcode. */
+.lbl{font-family:Calibri,Carlito,Arial,sans-serif;text-align:center}
+.lbl .mono,.lbl-loc .sub,.lbl-batch .t{font-family:Calibri,Carlito,Arial,sans-serif !important;font-weight:700}
+.lbl-loc .sub,.lbl-batch .t,.lbl-batch .main{justify-content:center;gap:3mm}
+.lbl-loc .code,.lbl-badge .nm,.lbl-cmd .nm{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700}
+.lbl-batch .size,.lbl-batch .color,.lbl-batch .qty,.lbl-batch .made{font-family:Calibri,Carlito,Arial,sans-serif}
+@media print{
+  #print-area .lbl{width:49.8mm !important;height:24.8mm !important;box-sizing:border-box;padding:.8mm 1.2mm}
+  #print-area .lbl .mono,#print-area .lbl-loc .sub,#print-area .lbl-batch .t{font-size:7.5pt !important}
+  #print-area .lbl-loc .code{font-size:16pt}
+  #print-area .lbl-batch .t b,#print-area .lbl-batch .made{font-size:9pt}
+}
