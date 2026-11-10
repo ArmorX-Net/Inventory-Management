@@ -108,11 +108,21 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
 
   // ---------- helpers: barcode, toast, beep ----------
+  // Barcodes for the thermal printer (best practice for 1D Code 128 scanners):
+  // - drawn as vector bars, never a barcode font and never stretched to fit (stretching gives uneven bars that scanners reject)
+  // - every bar is a whole number of printer dots: 1 module = 0.254 mm = 2 dots at 203 dpi, 3 dots at 300 dpi
+  // - quiet zone of at least 10 modules (2.5 mm) of white on both sides, bars as tall as the label allows, pure black
+  var MODULE_MM = 0.254, QUIET = 10, MAX_MM = 47;
   function barcode(svg, code, opts, cssH) {
     if (!svg) return;
-    svg.style.width = '100%'; if (cssH) svg.style.height = cssH;
-    try { window.JsBarcode(svg, code, Object.assign({ format: 'CODE128', displayValue: false, margin: 12, height: 40, width: 2 }, opts || {})); }
-    catch (e) { svg.outerHTML = '<div class="mono small">' + esc(code) + ' (barcode library not loaded)</div>'; }
+    try {
+      window.JsBarcode(svg, code, { format: 'CODE128', displayValue: false, margin: 0, height: 100, width: 1, lineColor: '#000', background: '#fff' });
+      var modules = parseFloat(svg.getAttribute('width')) || 100, mm = MODULE_MM;
+      while ((modules + 2 * QUIET) * mm > MAX_MM && mm > 0.191) mm -= 0.0635; // very long codes only: step down whole dots
+      svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('shape-rendering', 'crispEdges');
+      svg.style.width = (modules * mm).toFixed(3) + 'mm'; svg.style.height = cssH || '10mm';
+      svg.style.margin = '0 auto'; svg.style.padding = '0 ' + (QUIET * mm).toFixed(2) + 'mm'; svg.style.boxSizing = 'content-box'; svg.style.maxWidth = 'none';
+    } catch (e) { svg.outerHTML = '<div class="mono small">' + esc(code) + ' (barcode library not loaded)</div>'; }
   }
   var toastT;
   function toast(msg) {
@@ -139,7 +149,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="main"><div class="size">' + esc(n.size.replace('x', '×')) + ' <span class="color">' + esc(n.color.toUpperCase()) + '</span></div><div class="qty">' + b.qty + ' <small>NETS</small></div></div>' +
       '<svg class="bc"></svg>' +
       '<div class="t"><span>PICK ' + esc(n.pick) + '</span><span>FIRST MADE, FIRST OUT</span></div>';
-    barcode(el.querySelector('.bc'), b.id, { height: 30, width: 1.8 }, '7.5mm');
+    barcode(el.querySelector('.bc'), b.id, null, '9mm');
     return el;
   }
   function boxLabel(code) {
@@ -147,13 +157,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     el.className = 'lbl lbl-loc' + (bk ? ' backup' : '');
     el.innerHTML = '<div class="stripe ' + esc(bin ? 'bins' : (n ? n.color : '')) + '"></div><div class="code">' + esc(code) + '</div>' +
       '<div class="sub"><span><b>' + esc(n ? n.size.replace('x', '×') : 'free') + '</b> ' + esc(bin ? 'BLACK | BROWN | GREY' : (n ? n.color.toUpperCase() : '')) + '</span><span class="role">' + (bk ? 'BACKUP' : 'PICK') + ' ' + (bx ? bx.cap : '') + '</span></div><svg class="bc"></svg>';
-    barcode(el.querySelector('.bc'), code, { height: 30, width: 1.6 }, '8mm');
+    barcode(el.querySelector('.bc'), code, null, '10mm');
     return el;
   }
   function floorLabel() {
     var el = document.createElement('div'); el.className = 'lbl lbl-cmd';
     el.innerHTML = '<div class="mono" style="font-size:6.5pt">ARMORX · LOCATION</div><div class="nm">2F · Second floor</div><svg class="bc"></svg><div class="mono" style="font-size:6.5pt;text-align:center">2F</div>';
-    barcode(el.querySelector('.bc'), FLOOR2, { height: 30, width: 2 }, '9mm');
+    barcode(el.querySelector('.bc'), FLOOR2, null, '10mm');
     return el;
   }
   function sideSign(side) { // rack side sign: big side code + size range, 3 per A4 page, cut and laminate
@@ -165,14 +175,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function badgeLabel(w) {
     var el = document.createElement('div'); el.className = 'lbl lbl-badge';
     el.innerHTML = '<div class="sub mono" style="font-size:6.5pt">ARMORX · WORKER</div><div class="nm">' + esc(w.name) + '</div><div class="mono" style="font-size:6.5pt">' + esc(w.id) + ' · ' + esc(w.role) + '</div><svg class="bc"></svg>';
-    barcode(el.querySelector('.bc'), w.id, { height: 30, width: 2 }, '9mm');
+    barcode(el.querySelector('.bc'), w.id, null, '10mm');
     return el;
   }
   var COMMANDS = [['CMD-OUT', 'OUT · order pick'], ['CMD-FBA', 'OUT · FBA shipment'], ['CMD-RETURN', 'RETURN · back to stock'], ['CMD-DAMAGED', 'RETURN · damaged'], ['CMD-COUNT', 'COUNT · correct total'], ['CMD-SWAP', 'SWAP · backup down'], ['CMD-REFILL', 'REFILL · from 2F'], ['CMD-EMPTY', 'EMPTY · box ran out'], ['CMD-CANCEL', 'CANCEL · clear'], ['QTY-1', 'Qty 1'], ['QTY-5', 'Qty 5'], ['QTY-10', 'Qty 10'], ['QTY-20', 'Qty 20'], ['QTY-25', 'Qty 25']];
   function cmdLabel(c) {
     var el = document.createElement('div'); el.className = 'lbl lbl-cmd';
     el.innerHTML = '<div class="mono" style="font-size:6.5pt">ARMORX · COMMAND</div><div class="nm">' + esc(c[1]) + '</div><svg class="bc"></svg><div class="mono" style="font-size:6.5pt;text-align:center">' + esc(c[0]) + '</div>';
-    barcode(el.querySelector('.bc'), c[0], { height: 30, width: 2 }, '9mm');
+    barcode(el.querySelector('.bc'), c[0], null, '10mm');
     return el;
   }
   function printLabels(nodes, size) {
