@@ -170,16 +170,6 @@ body.cam-on{overflow:hidden}
 .lbl-loc.backup .role{border:1px solid #111;padding:0 1mm}
 .lbl-batch .made{font-family:var(--f-display);font-weight:700;font-size:13pt}
 .colorbtn{display:inline-flex;align-items:center;gap:6px;font-size:1rem;padding:10px 14px}
-.signs-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-.sign{background:#fff;color:#111;border:2px solid #111;padding:16px;display:flex;flex-direction:column;gap:10px;break-after:page;page-break-after:always}
-.sign .sg-side{font-family:var(--f-display);font-weight:700;font-size:64pt;line-height:.9;background:#f6c400;color:#111;align-self:flex-start;padding:0 12px}
-.sign .sg-side.r{background:#2f6fb0;color:#fff}
-.sign .sg-rng{font-family:var(--f-display);font-weight:700;font-size:44pt;line-height:1;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
-.sign .sg-rng span{font-size:20pt;color:#555}
-.sign .sg-star{font-family:var(--f-display);font-size:20pt;font-weight:600;background:#f8c9a3;padding:4px 10px;align-self:flex-start}
-.sign .sg-rules{display:flex;flex-wrap:wrap;gap:6px 18px;font-family:var(--f-mono);font-size:11pt}
-.signs-preview .sign .sg-side{font-size:32pt}.signs-preview .sign .sg-rng{font-size:22pt}.signs-preview .sign .sg-rng span{font-size:12pt}.signs-preview .sign .sg-star{font-size:12pt}.signs-preview .sign .sg-rules{font-size:8pt}
-@media print{#print-area .sign{width:277mm;height:190mm;justify-content:center;gap:24px}#print-area .sign .sg-side{font-size:120pt}#print-area .sign .sg-rng{font-size:90pt}#print-area .sign .sg-rng span{font-size:36pt}#print-area .sign .sg-star{font-size:30pt}#print-area .sign .sg-rules{font-size:16pt}}
 
 /* count sheet and pick list */
 .cin{width:80px;padding:4px 6px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink)}
@@ -195,3 +185,14 @@ body.cam-on{overflow:hidden}
 .act.on{background:var(--tag);border-color:var(--tag);color:#111}
 .act.ghost{background:transparent}
 @media (max-width:600px){.acts-g{grid-template-columns:repeat(2,1fr)}.act{min-height:52px}}
+
+/* rack side signs: big side code + size range; 3 per A4 portrait page */
+.sign{background:#fff;color:#111;border:3px solid #111;padding:12px 16px;display:flex;align-items:center;gap:20px;break-inside:avoid}
+.sign .sg-side{font-family:var(--f-display);font-weight:700;font-size:56pt;line-height:1;background:#f6c400;color:#111;padding:6px 14px;flex:none}
+.sign .sg-side.r{background:#2f6fb0;color:#fff}
+.sign .sg-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.sign .sg-rng{font-family:var(--f-display);font-weight:700;font-size:30pt;line-height:1.05;color:#111}
+.sign .sg-rng span{font-size:16pt;color:#111;font-weight:600}
+.sign .sg-star{font-family:var(--f-display);font-size:13pt;font-weight:700;background:#f8c9a3;padding:3px 8px;align-self:flex-start}
+.signs-preview .sign .sg-side{font-size:40pt}.signs-preview .sign .sg-rng{font-size:22pt}.signs-preview .sign .sg-rng span{font-size:12pt}.signs-preview .sign .sg-star{font-size:10pt}
+@media print{#print-area .sign{width:190mm;height:88mm;box-sizing:border-box;margin:0 0 4mm;padding:6mm 8mm;gap:10mm}#print-area .sign:nth-child(3n){break-after:page;page-break-after:always;margin-bottom:0}#print-area .sign .sg-side{font-size:150pt;padding:2mm 6mm}#print-area .sign .sg-rng{font-size:72pt}#print-area .sign .sg-rng span{font-size:30pt}#print-area .sign .sg-star{font-size:16pt;white-space:nowrap}}

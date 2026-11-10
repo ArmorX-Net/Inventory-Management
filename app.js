@@ -160,11 +160,10 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     barcode(el.querySelector('.bc'), FLOOR2, { height: 30, width: 2 }, '9mm');
     return el;
   }
-  function sideSign(side) {
+  function sideSign(side) { // rack side sign: big side code + size range, 3 per A4 page, cut and laminate
     var rg = (window.SIDE_RANGES || {})[side] || ['', ''], el = document.createElement('div'); el.className = 'sign';
-    el.innerHTML = '<div class="sg-side' + (/R$/.test(side) ? ' r' : '') + '">' + esc(side) + '</div><div class="sg-rng">' + esc(rg[0].replace('x', '×')) + '<span>to</span>' + esc(rg[1].replace('x', '×')) + '</div>' +
-      (side === 'AR' ? '<div class="sg-star">★ 210×100 · columns 1–3 · pick from R3</div>' : '') +
-      '<div class="sg-rules"><span>R2–R4 popular sizes</span><span>R1 / R5 slow sizes</span><span>R6 backup only</span><span>Black · Brown · Grey, left to right</span></div>';
+    el.innerHTML = '<div class="sg-side' + (/R$/.test(side) ? ' r' : '') + '">' + esc(side) + '</div><div class="sg-body"><div class="sg-rng"><div>' + esc(rg[0].replace('x', '×')) + ' <span>to</span></div><div>' + esc(rg[1].replace('x', '×')) + '</div></div>' +
+      (side === 'AR' ? '<div class="sg-star">★ 210×100 · columns 1–3 · pick from R3</div>' : '') + '</div>';
     return el;
   }
   function badgeLabel(w) {
@@ -667,13 +666,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels (100 × 50 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Worker badges</h3><button class="btn primary" id="pW">Print all badges</button></div><div class="labels-preview" id="prevW"></div></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the second-floor label 2F.</div><div class="labels-preview" id="prevC"></div></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs (A4)</h3><button class="btn primary" id="pS">Print all 6 signs</button></div><div class="small muted">One big sign at the end of each side, showing its size range.</div><div class="signs-preview" id="prevS"></div></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs (3 per A4)</h3><button class="btn primary" id="pS">Print all 6 signs (2 pages)</button></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Prints 3 per A4 page, portrait. Cut along the borders and laminate.</div><div class="signs-preview" id="prevS"></div></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Shelf labels</h3><div class="row" style="align-items:flex-end"><label class="f">Side<select id="pSide">' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pL">Print this side</button></div></div><div class="small muted" id="cntL"></div><div class="labels-preview" id="prevL"></div></div>');
     S.workers.forEach(function (w) { document.getElementById('prevW').appendChild(badgeLabel(w)); });
     COMMANDS.forEach(function (c) { document.getElementById('prevC').appendChild(cmdLabel(c)); });
     document.getElementById('prevC').appendChild(floorLabel());
     sides.slice(0, 2).forEach(function (sd) { document.getElementById('prevS').appendChild(sideSign(sd)); });
-    document.getElementById('pS').onclick = function () { printLabels(sides.map(sideSign), 'A4'); };
+    document.getElementById('pS').onclick = function () { printLabels(sides.map(sideSign), 'A4P'); };
     function codesFor(side) { return Object.keys(BOXES).filter(function (k) { return k.indexOf(side + '-') === 0; }).sort(sideOrder); }
     function drawL() { var side = document.getElementById('pSide').value, codes = codesFor(side), el = document.getElementById('prevL'); el.innerHTML = ''; codes.slice(0, 12).forEach(function (c) { el.appendChild(boxLabel(c)); }); document.getElementById('cntL').textContent = codes.length + ' labels on side ' + side + (codes.length > 12 ? ' (showing the first 12)' : '') + '.'; }
     document.getElementById('pSide').onchange = drawL; drawL();
