@@ -163,7 +163,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function sideSign(side) { // rack side sign: big side code + size range, 3 per A4 page, cut and laminate
     var rg = (window.SIDE_RANGES || {})[side] || ['', ''], el = document.createElement('div'); el.className = 'sign';
     el.innerHTML = '<div class="sg-side' + (/R$/.test(side) ? ' r' : '') + '">' + esc(side) + '</div><div class="sg-body"><div class="sg-rng"><div>' + esc(rg[0].replace('x', '×')) + ' <span>to</span></div><div>' + esc(rg[1].replace('x', '×')) + '</div></div>' +
-      (side === 'AR' ? '<div class="sg-star">★ 210×100 · columns 1–3 · pick from R3</div>' : '') + '</div>';
+      (side === 'AR' ? '<div class="sg-star">★ 210×100: C1–C3, pick R3</div>' : '') + '</div>';
     return el;
   }
   function badgeLabel(w) {

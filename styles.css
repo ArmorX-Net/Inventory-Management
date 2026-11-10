@@ -195,4 +195,20 @@ body.cam-on{overflow:hidden}
 .sign .sg-rng span{font-size:16pt;color:#111;font-weight:600}
 .sign .sg-star{font-family:var(--f-display);font-size:13pt;font-weight:700;background:#f8c9a3;padding:3px 8px;align-self:flex-start}
 .signs-preview .sign .sg-side{font-size:40pt}.signs-preview .sign .sg-rng{font-size:22pt}.signs-preview .sign .sg-rng span{font-size:12pt}.signs-preview .sign .sg-star{font-size:10pt}
-@media print{#print-area .sign{width:190mm;height:88mm;box-sizing:border-box;margin:0 0 4mm;padding:6mm 8mm;gap:10mm}#print-area .sign:nth-child(3n){break-after:page;page-break-after:always;margin-bottom:0}#print-area .sign .sg-side{font-size:150pt;padding:2mm 6mm}#print-area .sign .sg-rng{font-size:72pt}#print-area .sign .sg-rng span{font-size:30pt}#print-area .sign .sg-star{font-size:16pt;white-space:nowrap}}
+@media print{#print-area .sign{width:190mm;height:88mm;box-sizing:border-box;margin:0 0 4mm;padding:6mm 8mm;gap:10mm}#print-area .sign:nth-child(3n){break-after:page;page-break-after:always;margin-bottom:0}#print-area .sign .sg-side{font-size:150pt;padding:2mm 6mm}#print-area .sign .sg-rng{font-size:72pt}#print-area .sign .sg-rng span{font-size:30pt}#print-area .sign .sg-star{font-size:20pt;white-space:nowrap}}/* PRINT RULE (owner, 10 Nov 2026): every printout is pure solid black on white. No colors, no grey: there is no color printer and grey prints dull. */
+@media print{
+  #print-area,#print-area *{color:#000 !important;border-color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #print-area .sign .sg-side,#print-area .sign .sg-side.r{background:#000 !important;color:#fff !important}
+  #print-area .sign .sg-star{background:#fff !important;border:1mm solid #000;font-weight:700}
+  #print-area .stripe.Black{background:#000 !important}
+  #print-area .stripe.Brown{background:repeating-linear-gradient(90deg,#000 0 1.5mm,#fff 1.5mm 3mm) !important}
+  #print-area .stripe.Grey{background:#fff !important;box-sizing:border-box;border:.4mm solid #000}
+  #print-area .stripe.bins{background:repeating-linear-gradient(90deg,#000 0 .6mm,#fff .6mm 1.6mm) !important}
+  #print-area .lbl-loc.backup{background:#fff !important}
+  #print-area .lbl-loc.backup .role{background:#000 !important;color:#fff !important;padding:0 1mm}
+  #print-area .sheet th,#print-area .sheet td{border:1px solid #000 !important}
+  #print-area .lbl-batch .ticks span{border-color:#000 !important}
+}
+/* screen previews of the side signs follow the same black-only look */
+.sign .sg-side,.sign .sg-side.r{background:#000;color:#fff}
+.sign .sg-star{background:#fff;border:2px solid #000}
