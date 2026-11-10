@@ -29,7 +29,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       { id: 'EMP-04', name: 'Worker 4', role: 'Final finishing' },
       { id: 'EMP-05', name: 'Worker 5', role: 'Packing' },
       { id: 'EMP-06', name: 'Worker 6', role: 'Racks & dispatch' }
-    ], settings: { batchSize: '100x50' }, boxes: {}, demo: false };
+    ], settings: { batchSize: '50x25' }, boxes: {}, demo: false };
   }
   var S;
   function load() {
@@ -132,18 +132,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
 
   // ---------- label builders ----------
-  function batchLabel(b) {
+  function batchLabel(b) { // 50 x 25 mm thermal label (one per page): batch, made date, net, quantity, barcode
     var n = BY_ID[b.net], el = document.createElement('div');
     el.className = 'lbl lbl-batch';
-    el.innerHTML = '<div class="t"><b>ARMORX · DOORNET BATCH</b><span>' + esc(new Date(b.created).toLocaleDateString()) + '</span></div>' +
-      '<div class="stripe ' + esc(n.color) + '"></div>' +
-      '<div class="main"><div><div class="size">' + esc(n.size.replace('x', ' × ')) + '</div><div class="color">' + esc(n.color) + '</div></div>' +
-      '<div class="qty">' + b.qty + '<small>NETS</small></div></div>' +
+    el.innerHTML = '<div class="t"><b>' + esc(b.id) + '</b><span class="made">MADE ' + esc(new Date(b.created).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }).toUpperCase()) + '</span></div>' +
+      '<div class="main"><div class="size">' + esc(n.size.replace('x', '×')) + ' <span class="color">' + esc(n.color.toUpperCase()) + '</span></div><div class="qty">' + b.qty + ' <small>NETS</small></div></div>' +
       '<svg class="bc"></svg>' +
-      '<div class="t"><b style="font-size:10pt">' + esc(b.id) + '</b><span class="made">MADE ' + esc(new Date(b.created).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }).toUpperCase()) + '</span></div>' +
-      '<div class="t"><span class="home">PICK ' + esc(n.pick) + (n.backups && n.backups.length ? ' · BACKUP ' + esc(n.backups.length) : '') + '</span><span class="home">FIRST MADE, FIRST OUT</span></div>' +
-      '<div class="ticks">' + SHORT.slice(1).map(function (s) { return '<span>' + s + '</span>'; }).join('') + '</div>';
-    barcode(el.querySelector('.bc'), b.id, { height: 34, width: 2.2 }, '10mm');
+      '<div class="t"><span>PICK ' + esc(n.pick) + '</span><span>FIRST MADE, FIRST OUT</span></div>';
+    barcode(el.querySelector('.bc'), b.id, { height: 30, width: 1.8 }, '7.5mm');
     return el;
   }
   function boxLabel(code) {
@@ -251,8 +247,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="row"><div id="lblPrev"></div><div class="tablewrap" style="flex:1"><table><thead><tr><th>Step</th><th>Who</th><th>Good</th><th>Rejected</th><th>When</th></tr></thead><tbody>' +
       b.history.map(function (x) { return '<tr><td>' + esc(STAGES[x.stage]) + (x.loc ? ' <code>' + esc(x.loc) + '</code>' : '') + '</td><td>' + esc(wname(x.by)) + '</td><td>' + x.qty + '</td><td>' + (x.rej || '') + '</td><td class="muted">' + fmtT(x.t) + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
     el.querySelector('#lblPrev').appendChild(batchLabel(b));
-    el.querySelector('#reprint').onclick = function () { printLabels([batchLabel(b)], '100x50'); };
-    var tg = el.querySelector('#boxtags'); if (tg) tg.onclick = function () { var k = Math.max(1, Math.ceil(b.good / 20)), arr = []; for (var i = 0; i < k; i++) arr.push(batchLabel(b)); printLabels(arr, '100x50'); };
+    el.querySelector('#reprint').onclick = function () { printLabels([batchLabel(b)], '50x25'); };
+    var tg = el.querySelector('#boxtags'); if (tg) tg.onclick = function () { var k = Math.max(1, Math.ceil(b.good / 20)), arr = []; for (var i = 0; i < k; i++) arr.push(batchLabel(b)); printLabels(arr, '50x25'); };
     el.hidden = false;
   }
   function prefill(id, qty) {
@@ -290,7 +286,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       var id = 'DN-' + s + '-' + { Black: 'BK', Brown: 'BR', Grey: 'GR' }[c];
       var b = newBatch(id, q, 'Manager'); save();
       viewBatches(); showBatch(b.id);
-      printLabels([batchLabel(b)], '100x50');
+      printLabels([batchLabel(b)], '50x25');
     };
     app.querySelectorAll('[data-open]').forEach(function (x) { x.onclick = function () { renderBatchDetail(document.getElementById('batchDetail'), S.batches[x.dataset.open]); document.getElementById('batchDetail').scrollIntoView({ behavior: 'smooth' }); }; });
   }
@@ -663,7 +659,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   // ---------- setup labels ----------
   function viewPrint() {
     var sides = window.SIDES || [];
-    h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels (100 × 50 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
+    h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels and box tags (also 50 × 25 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Worker badges</h3><button class="btn primary" id="pW">Print all badges</button></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevW"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the second-floor label 2F.</div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevC"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs (3 per A4)</h3><button class="btn primary" id="pS">Print all 6 signs (2 pages)</button></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Prints 3 per A4 page, portrait. Cut along the borders and laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +

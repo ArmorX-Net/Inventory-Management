@@ -112,13 +112,13 @@ tr:last-child td{border-bottom:none}
 .labels-preview{display:flex;flex-wrap:wrap;gap:12px}
 .lbl{background:#fff;color:#111;border:1px solid #bbb;border-radius:3px;display:flex;flex-direction:column;overflow:hidden;font-family:var(--f-body)}
 .lbl svg{display:block;max-width:100%}
-.lbl-batch{width:100mm;height:50mm;padding:2.5mm 3mm;gap:1mm}
-.lbl-batch .t{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--f-mono);font-size:7pt;letter-spacing:.06em}
-.lbl-batch .main{display:flex;justify-content:space-between;align-items:flex-end;gap:2mm}
-.lbl-batch .size{font-family:var(--f-display);font-weight:700;font-size:21pt;line-height:.95}
-.lbl-batch .color{font-family:var(--f-display);font-weight:600;font-size:13pt;text-transform:uppercase}
-.lbl-batch .qty{font-family:var(--f-display);font-weight:700;font-size:16pt;text-align:right;line-height:1}
-.lbl-batch .qty small{display:block;font-size:7pt;font-family:var(--f-mono);font-weight:400}
+.lbl-batch{width:50mm;height:25mm;padding:1.2mm 2mm;gap:.4mm}
+.lbl-batch .t{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--f-mono);font-size:6pt;letter-spacing:.02em}.lbl-batch .t b{font-size:8.5pt}
+.lbl-batch .main{display:flex;justify-content:space-between;align-items:baseline;gap:1mm}
+.lbl-batch .size{font-family:var(--f-display);font-weight:700;font-size:13pt;line-height:1}
+.lbl-batch .color{font-family:var(--f-display);font-weight:700;font-size:10pt}
+.lbl-batch .qty{font-family:var(--f-display);font-weight:700;font-size:12pt;text-align:right;line-height:1;white-space:nowrap}
+.lbl-batch .qty small{font-size:6pt;font-family:var(--f-mono);font-weight:700}
 .lbl-batch .home{font-family:var(--f-mono);font-size:7pt}
 .lbl-batch .ticks{display:flex;gap:1mm;font-family:var(--f-mono);font-size:6pt}
 .lbl-batch .ticks span{border:.3mm solid #111;padding:0 1mm;flex:1;text-align:center}
@@ -168,7 +168,7 @@ body.cam-on{overflow:hidden}
 .lbl-loc .role{font-weight:700}
 .lbl-loc.backup{background:repeating-linear-gradient(135deg,#fff 0 3mm,#eee 3mm 6mm)}
 .lbl-loc.backup .role{border:1px solid #111;padding:0 1mm}
-.lbl-batch .made{font-family:var(--f-display);font-weight:700;font-size:13pt}
+.lbl-batch .made{font-family:var(--f-display);font-weight:700;font-size:8.5pt}
 .colorbtn{display:inline-flex;align-items:center;gap:6px;font-size:1rem;padding:10px 14px}
 
 /* count sheet and pick list */
