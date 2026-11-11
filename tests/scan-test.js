@@ -137,6 +137,39 @@ const STEPS = [
   S = await st();
   expect('count sheet saved 30 with its reason', S.stock[NET] === 30 && S.log[0].reason === 'Found extra nets');
 
+  // put away (opening count, net first): type the size, tap the color, the app shows the box; adds add up
+  await page.evaluate(() => { location.hash = 'scan'; }); await page.waitForSelector('#scanIn');
+  const fbText = async () => (await page.textContent('#fb')).replace(/\s+/g, ' ');
+  const scan = async (c) => { await page.fill('#scanIn', c); await page.press('#scanIn', 'Enter'); };
+  const PA = 'DN-210x90-BK', PA_BOX = 'CR-C4-R4';
+  await scan('CMD-PUTAWAY');
+  expect('put away mode asks for the size', (await fbText()).includes('Type the size') && !!(await page.$('#paSize')));
+  await page.fill('#paSize', '210 9');
+  expect('typing 210 9 lists 210 x 90 and friends', !!(await page.$('[data-pa-size="210x90"]')) && !(await page.$('[data-pa-size="205x90"]')));
+  await page.click('[data-pa-size="210x90"]');
+  await page.click('[data-pa-net="' + PA + '"]');
+  expect('the box shows in big letters with a plain hint', (await page.textContent('.pa-loc')) === PA_BOX && (await page.textContent('.pa-hint')).includes('Rack C · right side · column 4 · row 4'));
+  await page.click('[data-pa-add="1"]');
+  expect('+1 recorded', (await fbText()).includes('Now 1 there'));
+  await page.click('.pa-same');
+  await page.fill('#paQty', '4'); await page.press('#paQty', 'Enter');   // other number: type it
+  expect('+4 adds up to 5', (await fbText()).includes('Now 5 there'));
+  await page.click('.pa-same');
+  await scan(PICK);
+  expect('scanning the wrong shelf says where it goes', (await fbText()).includes('Wrong box'));
+  await scan(PA_BOX);
+  expect('scanning the right shelf confirms it', (await fbText()).includes('Right box'));
+  await page.click('[data-pa-top="3"]');
+  expect('box full: 3 on top of the rack', (await fbText()).includes('top of the rack'));
+  await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
+  S = await st();
+  expect('undo takes only the last add back off: box 5, nothing on top', S.counts[PA_BOX + '|' + PA].qty === 5 && !S.counts['TOP|' + PA] && !!(await page.$('#paSize')));
+  await page.fill('#paSize', '210100'); await page.click('[data-pa-size="210x100"]'); await page.click('[data-pa-net="DN-210x100-BK"]');
+  await scan('20');
+  await page.click('.pa-same');
+  expect('a full box sends the next nets to the next box with room', (await page.textContent('.pa-loc')) === 'AR-C1-R1');
+  await scan('CMD-CANCEL');
+
   for (const tab of ['dashboard', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'people', 'settings']) {
     await page.evaluate((t) => { location.hash = t; }, tab);
     await page.waitForTimeout(150);

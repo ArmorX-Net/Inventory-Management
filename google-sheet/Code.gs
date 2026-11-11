@@ -14,7 +14,8 @@
 
 // Version 4 (11 Nov 2026): undo the last scan, reasons on count changes, box count (opening count).
 // Version 5 (11 Nov 2026): PIN sign-in, levels, lockout after wrong PINs. The old access key is no longer used.
-var VERSION = 5;
+// Version 6 (11 Nov 2026): put away (BOXADD adds nets to a box count instead of replacing it).
+var VERSION = 6;
 var SIGNIN_DAYS = 30;       // a phone stays signed in this long
 var MAX_TRIES = 5;          // wrong PINs in a row before the badge is locked
 var LOCK_MIN = 15;          // first lock; doubles with every further lock, up to one day
@@ -296,6 +297,8 @@ function apply_(ev, station) {
     undo_(ev, t);
   } else if (ev.type === 'BOXCOUNT') {
     count_(ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id);
+  } else if (ev.type === 'BOXADD') {
+    countAdd_(ev.loc, ev.net, ev.netName, Number(ev.qty) || 0, false, t, ev.who, ev.id);
   } else if (ev.type === 'BOXSET') {
     box_(ev.loc, ev.state || 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'COUNTDONE') {
@@ -352,6 +355,21 @@ function undo_(ev, t) {
     if (r) count_(p[0], p[1], '', r.qty, t, ev.who, ev.id);
     else deleteWhere_('Counts', function (row) { return String(row[0]) === p[0] && String(row[1]) === p[1]; });
   });
+  var ca = ev.countsAdd || {}; // undo of a put away: take the nets back off, so adds from other phones are kept
+  Object.keys(ca).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(ca[k].add) || 0, !!ca[k].drop, t, ev.who, ev.id); });
+}
+
+// Put away: add nets to a box (or TOP) count. Several phones can add to the same box at once.
+// drop = the row did not exist before this add, so remove it again when it goes back to 0.
+function countAdd_(box, net, name, add, drop, t, who, id) {
+  if (!box || !net) return;
+  var sh = sheet_('Counts'), r = rows_('Counts');
+  for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) {
+    var q = (Number(r[i][3]) || 0) + add;
+    if (drop && q <= 0) { sh.deleteRow(i + 2); return; }
+    sh.getRange(i + 2, 1, 1, 7).setValues([[box, net, name || r[i][2], Math.max(0, q), t, workerName_(who), id || '']]); return;
+  }
+  if (add > 0) sh.appendRow([box, net, name || '', add, t, workerName_(who), id || '']);
 }
 
 // Box count: one row per box + net (a 3-bin box has one row per color). A new count of the same box replaces the old one.
