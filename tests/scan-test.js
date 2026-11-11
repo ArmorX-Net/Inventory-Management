@@ -13,7 +13,7 @@ function batch(id, made) {
 const STATE = {
   seq: 2, stock: {}, log: [], boxes: {}, demo: false, layout: 'v7', settings: { batchSize: '50x25' },
   workers: [{ id: 'EMP-06', name: 'Test Picker', role: 'Racks & dispatch' }, { id: 'EMP-07', name: 'Test Stitcher', role: 'Stitching' }],
-  auth: { t: 'test-token', exp: Date.now() + 864e5, id: 'EMP-06', name: 'Test Picker', level: 'Admin' }, // signed in (no sheet in this test)
+  auth: { t: 'test-token', exp: Date.now() + 864e5, id: 'EMP-06', name: 'Test Picker', level: 'Owner' }, // signed in as the owner (no sheet in this test)
   batches: { 'WO-0001': batch('WO-0001', '2026-11-01T08:00:00.000Z'), 'WO-0002': batch('WO-0002', '2026-11-05T08:00:00.000Z') },
 };
 
@@ -142,6 +142,7 @@ const STEPS = [
   const fbText = async () => (await page.textContent('#fb')).replace(/\s+/g, ' ');
   const scan = async (c) => { await page.fill('#scanIn', c); await page.press('#scanIn', 'Enter'); };
   const PA = 'DN-210x90-BK', PA_BOX = 'CR-C4-R4';
+  const paBefore = (await st()).stock[PA] || 0;
   await scan('CMD-PUTAWAY');
   expect('put away mode asks for the size', (await fbText()).includes('Type the size') && !!(await page.$('#paSize')));
   await page.fill('#paSize', '210 9');
@@ -163,12 +164,24 @@ const STEPS = [
   expect('box full: 3 on top of the rack', (await fbText()).includes('top of the rack'));
   await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
   S = await st();
-  expect('undo takes only the last add back off: box 5, nothing on top', S.counts[PA_BOX + '|' + PA].qty === 5 && !S.counts['TOP|' + PA] && !!(await page.$('#paSize')));
+  expect('undo takes only the last add back off: box 5, nothing on top', S.shelf[PA_BOX + '|' + PA].qty === 5 && !S.shelf['TOP|' + PA] && !!(await page.$('#paSize')));
+  expect('put away goes into stock straight away (+5), not into the box count list', S.stock[PA] === paBefore + 5 && !Object.keys(S.counts).some((k) => k.endsWith('|' + PA)));
   await page.fill('#paSize', '210100'); await page.click('[data-pa-size="210x100"]'); await page.click('[data-pa-net="DN-210x100-BK"]');
   await scan('20');
   await page.click('.pa-same');
   expect('a full box sends the next nets to the next box with room', (await page.textContent('.pa-loc')) === 'AR-C1-R1');
   await scan('CMD-CANCEL');
+  await page.evaluate(() => { location.hash = 'dashboard'; }); await page.waitForTimeout(150);
+  expect('dashboard shows the put aways so far', (await page.textContent('#app')).includes('Put away so far'));
+
+  // reset to zero: owner only, typed confirmation, everything back to 0
+  await page.evaluate(() => { location.hash = 'settings'; }); await page.waitForTimeout(150);
+  await page.waitForSelector('#rsGo');
+  await page.click('#rsGo');
+  expect('reset needs RESET typed first', (await page.textContent('#rsMsg')).includes('Type RESET') && Object.keys((await st()).stock).length > 0);
+  await page.fill('#rsTxt', 'reset'); await page.fill('#rsWhy', 'testing'); await page.click('#rsGo');
+  S = await st();
+  expect('owner reset: every net 0, boxes, counts and put aways cleared, log kept with a RESET line', Object.keys(S.stock).length === 0 && !Object.keys(S.boxes).length && !Object.keys(S.shelf).length && !Object.keys(S.counts).length && S.log[0].type === 'RESET' && S.log.length > 5);
 
   for (const tab of ['dashboard', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'people', 'settings']) {
     await page.evaluate((t) => { location.hash = t; }, tab);

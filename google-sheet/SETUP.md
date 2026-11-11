@@ -41,6 +41,8 @@ Paste the new `Code.gs`, then deploy a new version as below. The **Counts** tab 
 ## When you change Code.gs later
 Use **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**, so the URL stays the same.
 
+**Version 7 (11 Nov 2026):** put away goes into stock at once (new **Put away** tab keeps the number per box), the **Owner** level, and **Reset to zero** (Owner only; a copy goes to the new **Snapshots** tab first). Paste, Save, run **setup** once (adds the two tabs), deploy a new version. Then set your own row in the Workers tab to Level **Owner**.
+
 ## Version 5 (sign-in with a PIN)
 Nobody can read or change anything without signing in. The check happens in this script on every read and every scan, so the public app link alone shows nothing.
 
