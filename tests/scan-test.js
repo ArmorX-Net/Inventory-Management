@@ -5,7 +5,8 @@
 const path = require('path');
 const { chromium } = require('playwright');
 
-const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3', BACKUP = 'AR-C4-R6', BIN = 'AR-C4-R1';
+// 11 Nov 2026: no R6 backup boxes for now; extra stock sits on top of the racks (TOP, old labels 2F still work).
+const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3', OLD_R6 = 'AR-C4-R6', BIN = 'AR-C4-R1';
 function batch(id, made) {
   return { id, net: NET, qty: 20, good: 20, stage: 5, created: made, by: 'Manager', history: [{ stage: 0, by: 'Manager', qty: 20, rej: 0, t: made }], loc: null };
 }
@@ -21,9 +22,9 @@ const STEPS = [
   ['EMP-06', 'Hello Test Picker'],
   ['WO-0001', 'ready for the rack'],
   [PICK, 'still has older nets'],               // FIFO: never rack-in on top of older nets
-  ['2F', '20 nets in'],                          // bulk goes to the second floor
+  ['2F', '20 nets in'],                          // extra stock goes on top of the racks; an old 2F label still works
   ['CMD-OUT', 'OUT mode on'],
-  [BACKUP, 'is a backup box'],                   // pickers never pick from a backup box
+  [OLD_R6, 'Unknown code'],                      // R6 backup boxes are not in use
   [PICK, 'Enter the quantity'],
   ['3', 'now 17 in total'],
   [PICK, 'Enter the quantity'],
@@ -31,12 +32,17 @@ const STEPS = [
   ['CMD-EMPTY', 'EMPTY mode on'],
   [PICK, 'marked empty'],
   ['CMD-SWAP', 'SWAP mode on'],
-  [BACKUP, 'Swap:'],                              // backup comes down into the pick box
+  [PICK, 'Fill it from the top of the racks'],   // no backup box: refill straight from TOP
   ['CMD-REFILL', 'REFILL mode on'],
+  [PICK, 'take batch WO-0001'],                  // refill takes the oldest batch on top of the racks
   [PICK, 'is not empty'],                        // FIFO: never pour new nets on top
-  [BACKUP, 'take batch WO-0001'],                // refill takes the oldest second-floor batch
   ['CMD-EMPTY', 'EMPTY mode on'],
   [PICK, 'marked empty'],
+  ['CMD-EMPTY', 'EMPTY mode on'],
+  ['AR-C1-R3', 'Swap now'],                      // 210x100 keeps its backups on R1-R5 in AR C1-C3
+  ['CMD-SWAP', 'SWAP mode on'],
+  ['AR-C1-R2', 'Swap:'],
+  ['CMD-CANCEL', 'Cleared'],
   ['CMD-CANCEL', 'Cleared'],
   ['WO-0002', 'ready for the rack'],
   [PICK, '20 nets in'],                          // rack-in into an EMPTY box is allowed
@@ -60,19 +66,19 @@ const STEPS = [
   // box count (opening count): scan the shelf, type the number
   ['CMD-BOXCOUNT', 'BOX COUNT mode on'],
   [PICK, 'Count the nets'],
-  ['50', 'more than this box can hold'],
+  ['50', 'type 50 again'],                       // a big number is checked once, never blocked
   ['18', 'AR-C4-R3: 18 counted'],
-  [BACKUP, 'Count the nets'],
-  ['0', 'AR-C4-R6: 0 counted'],
+  ['AR-C4-R2', 'Count the nets'],
+  ['0', 'AR-C4-R2: 0 counted'],                  // an empty box is just 0
   [BIN, 'color 1 of 3'],                         // 3-bin box: one number per color
   ['4', 'color 2 of 3'],
   ['3', 'color 3 of 3'],
   ['2', 'AR-C4-R1: 2 counted'],
   ['@tap', '[data-undo]', 'Tap why'],
   ['@tap', '[data-why="Wrong number"]', 'Undone:'],
-  ['2F', 'Second floor'],
+  ['TOP', 'Top of racks'],
   ['@floor', 'Black', 'Count the nets'],
-  ['5', 'on the second floor: 5 counted'],
+  ['5', 'on top of the racks: 5 counted'],
   ['CMD-CANCEL', 'Cleared'],
 ];
 
@@ -104,7 +110,7 @@ const STEPS = [
   expect('undone rack-in is marked UNDONE in the log', S.log.some((e) => e.type === 'IN' && e.wo === 'WO-0002' && / · UNDONE/.test(e.note)));
   expect('every undo saved its reason', S.log.filter((e) => e.type === 'UNDO').map((e) => e.reason).join() === 'Wrong number,Wrong number,Wrong box');
   expect('count change saved with its reason', S.log.some((e) => e.type === 'COUNT' && e.qty === 35 && e.reason === 'Picked without scanning'));
-  expect('box count: ' + Object.keys(S.counts).sort().join(' '), Object.keys(S.counts).sort().join(' ') === ['2F|' + NET, BACKUP + '|' + NET, BIN + '|DN-185x100-BK', BIN + '|DN-185x100-BR', PICK + '|' + NET].sort().join(' '));
+  expect('box count: ' + Object.keys(S.counts).sort().join(' '), Object.keys(S.counts).sort().join(' ') === ['TOP|' + NET, 'AR-C4-R2|DN-185x95-BK', BIN + '|DN-185x100-BK', BIN + '|DN-185x100-BR', PICK + '|' + NET].sort().join(' '));
 
   // the manager applies the box count on the Stock page; a change needs a reason
   await page.evaluate(() => { location.hash = 'stock'; });
@@ -114,9 +120,9 @@ const STEPS = [
   await page.selectOption('#bcWhy', 'Opening count');
   await page.click('#bcApply');
   S = await st();
-  expect('applied: ' + NET + ' is ' + S.stock[NET] + ' (want 23 = 18 + 0 + 5 on 2F)', S.stock[NET] === 23);
+  expect('applied: ' + NET + ' is ' + S.stock[NET] + ' (want 23 = 18 in box + 5 on top)', S.stock[NET] === 23);
   expect('applied: 185x100 Black 4, Brown 3, Grey not counted so unchanged', S.stock['DN-185x100-BK'] === 4 && S.stock['DN-185x100-BR'] === 3 && !S.stock['DN-185x100-GR']);
-  expect('box counted 0 is marked empty', (S.boxes[BACKUP] || {}).state === 'empty');
+  expect('box counted 0 is marked empty', (S.boxes['AR-C4-R2'] || {}).state === 'empty' && S.stock['DN-185x95-BK'] === 0);
   expect('applied counts are cleared, nothing left over', Object.keys(S.counts).length === 0);
   expect('apply logged with the reason', S.log.some((e) => e.type === 'COUNT' && e.net === NET && e.qty === 23 && e.reason === 'Opening count'));
 

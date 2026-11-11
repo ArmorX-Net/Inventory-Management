@@ -48,3 +48,10 @@ Walking order from the main entrance: AR → AL → BR → BL → CR → CL. Rac
 | 3 racks, speed first | Fastest sizes at waist height near the entrance | Prime shelves all went to 210×100 |
 | 3 racks, pairs | Every size an easy pick box plus a paired backup | Too many box types; hard for pickers to build a mental map |
 | **v7, number order** | Number order, speed decides height inside each side, one exception | Chosen |
+
+
+## Change 11 Nov 2026: no R6 boxes, extra stock on top
+* The owner keeps R1-R5 and C1-C6 exactly as above. There is no second floor and, for now, no R6 boxes.
+* Extra stock sits on a platform on top of the racks (above R5, over C4-C6). Its exact places and first-in-first-out there are decided later. In the app this is one location, `TOP`.
+* The app hides the 36 planned R6 boxes (`USE_R6 = false` in `app.js`); they stay in `data/doornets.js` for later. 210x100 keeps its backups in AR C1-C3 (R1, R2, R4, R5).
+* Boxes hold whatever is really there (20, 8, 5 or none). The app keeps one total per net; part-full or empty boxes are normal.

@@ -138,7 +138,7 @@ function apply_(ev, station) {
       if (ev.rej) sh.getRange(b.row, 23).setValue((Number(b.values[22]) || 0) + Number(ev.rej));
     }
     if (ev.type === 'IN') stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t);
-    if (ev.type === 'IN' && ev.loc && ev.loc !== '2F') box_(ev.loc, 'full', ev.net, ev.wo, ev.made, t, ev.who);
+    if (ev.type === 'IN' && ev.loc && ev.loc !== '2F' && ev.loc !== 'TOP') box_(ev.loc, 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'SWAP') {
     var from = findRow_('Boxes', ev.loc);
     var v = from ? from.values : [ev.loc, 'full', ev.net || '', '', ev.made || ''];

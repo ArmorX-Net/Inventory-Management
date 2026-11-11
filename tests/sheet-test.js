@@ -95,6 +95,12 @@ post([{ type: 'COUNT', net: NET, qty: 23, reason: 'Opening count' }, { type: 'EM
 s = state();
 expect('apply: stock 23, counts cleared, backup empty, pick box full', s.stock[NET] === 23 && s.counts.length === 0 && s.boxes['AR-C4-R6'].state === 'empty' && s.boxes[PICK].state === 'full');
 
+// rack-in to TOP (extra stock on top of the racks) changes stock but makes no box row
+post([{ type: 'BATCH', wo: 'WO-0009', net: NET, qty: 10 }, { type: 'IN', wo: 'WO-0009', net: NET, qty: 10, loc: 'TOP' }]);
+s = state();
+expect('rack-in to TOP: stock 33, no TOP box row', s.stock[NET] === 33 && !s.boxes.TOP);
+post([{ type: 'OUT', net: NET, qty: 10 }]);
+
 // the same event sent twice (phone retry) is applied once
 post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);
 post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);

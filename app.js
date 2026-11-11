@@ -10,7 +10,19 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   var NETS = window.DOORNETS || [];
   var BOXES = window.BOXES || {}, BY_ID = {};
   NETS.forEach(function (n) { BY_ID[n.id] = n; });
-  var FLOOR2 = '2F'; // second-floor warehouse: bulk stock, refills the racks
+  var FLOOR2 = 'TOP'; // extra stock on top of the racks (above R5), refills the boxes. Old '2F' labels still scan as TOP.
+  // 11 Nov 2026 (owner): no R6 boxes for now. Extra stock sits on top of the racks (TOP) with no fixed places, so a pick box
+  // without a backup refills straight from TOP. The 210x100 backups on R1-R5 (AR C1-C3) stay. data/doornets.js keeps the
+  // planned R6 boxes; set USE_R6 to true to use them again.
+  var USE_R6 = false;
+  if (!USE_R6) {
+    Object.keys(BOXES).forEach(function (c) { if (/-R6$/.test(c)) delete BOXES[c]; });
+    NETS.forEach(function (n) {
+      n.backups = (n.backups || []).filter(function (c) { return BOXES[c]; });
+      n.home = 'Pick ' + n.pick + (n.backups.length ? ' · backup ' + n.backups.join(', ') : '');
+      n.cap = [n.pick].concat(n.backups).reduce(function (a, c) { var b = BOXES[c]; return a + (b ? (b.mix ? b.mix[n.id] : b.cap) : 0); }, 0);
+    });
+  }
   function netsAt(code) { var b = BOXES[code]; return b ? b.nets.map(function (id) { return BY_ID[id]; }) : []; }
   function homeOf(n) { return [n.pick].concat(n.backups || []); }
   function sideOrder(a, b) { var sides = window.SIDES || []; var x = a.match(/^(\w\w)-C(\d)-R(\d)$/), y = b.match(/^(\w\w)-C(\d)-R(\d)$/); if (!x || !y) return a < b ? -1 : 1; return sides.indexOf(x[1]) - sides.indexOf(y[1]) || x[2] - y[2] || y[3] - x[3]; }
@@ -166,7 +178,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   function floorLabel() {
     var el = document.createElement('div'); el.className = 'lbl lbl-cmd';
-    el.innerHTML = '<div class="mono" style="font-size:6.5pt">ARMORX · LOCATION</div><div class="nm">2F · Second floor</div><svg class="bc"></svg><div class="mono" style="font-size:6.5pt;text-align:center">2F</div>';
+    el.innerHTML = '<div class="mono" style="font-size:6.5pt">ARMORX · LOCATION</div><div class="nm">TOP · extra stock on top of racks</div><svg class="bc"></svg><div class="mono" style="font-size:6.5pt;text-align:center">TOP</div>';
     barcode(el.querySelector('.bc'), FLOOR2, null, '10mm');
     return el;
   }
@@ -327,12 +339,12 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<li>Scan your <b>badge</b> once. It stays until someone else scans theirs.</li>' +
       '<li>Scan the <b>batch label</b>. The batch moves to the next step: Cut → Base → Sides → Finish → Pack, and your name is saved on that step.</li>' +
       '<li>If some nets were rejected, type the good count and press Enter (within the next scan).</li>' +
-      '<li>After Pack, scan the batch, then <b>2F</b> (second floor) or an <b>empty</b> box on the rack. Stock goes up.</li>' +
+      '<li>After Pack, scan the batch, then <b>TOP</b> (top of racks) or an <b>empty</b> box on the rack. Stock goes up.</li>' +
       '<li>To pick: scan <b>OUT</b>, then the <b>pick box</b> (3-bin box: tap the color), then the quantity.</li>' +
-      '<li>Pick box empty: scan <b>SWAP</b>, then the backup box you bring down. No backup: scan <b>EMPTY</b>, then the box.</li>' +
-      '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest second-floor batch, scan <b>REFILL</b> and the box.</li>' +
+      '<li>Pick box empty: scan <b>EMPTY</b>, then the box. It goes on the refill list. (210×100 only: scan <b>SWAP</b> and the backup box you bring over.)</li>' +
+      '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest batch on top of the racks, scan <b>REFILL</b> and the box.</li>' +
       '<li>Made a mistake? Tap <b>Undo my last scan</b> (or scan <b>UNDO</b>) within ' + UNDO_MIN + ' minutes and pick why.</li>' +
-      '<li>Opening count or day 14 count: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>2F</b> for the second floor. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
+      '<li>Opening count or day 14 count: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>TOP</b> for the top of the racks. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
@@ -345,7 +357,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     function sim(id, codes) { var el = document.getElementById(id); el.innerHTML = codes.map(function (c) { return '<button type="button" data-c="' + esc(c[0]) + '" title="' + esc(c[1] || '') + '">' + esc(c[0]) + (c[1] ? ' · ' + esc(c[1]) : '') + '</button>'; }).join(''); }
     sim('simW', S.workers.map(function (w) { return [w.id, w.name.replace(' (sample)', '')]; }));
     sim('simB', Object.values(S.batches).filter(function (b) { return b.stage < 6; }).slice(-6).map(function (b) { return [b.id, SHORT[b.stage + 1] + ' next']; }));
-    var picks = ['DN-210x100-BK', 'DN-210x100-GR', 'DN-200x100-BK', 'DN-250x150-GR', 'DN-210x95-BR', 'DN-205x90-GR', 'DN-210x100-BR'].map(function (id) { return [BY_ID[id].pick, BY_ID[id].size + ' ' + BY_ID[id].color]; }).concat([[FLOOR2, 'second floor']]);
+    var picks = ['DN-210x100-BK', 'DN-210x100-GR', 'DN-200x100-BK', 'DN-250x150-GR', 'DN-210x95-BR', 'DN-205x90-GR', 'DN-210x100-BR'].map(function (id) { return [BY_ID[id].pick, BY_ID[id].size + ' ' + BY_ID[id].color]; }).concat([[FLOOR2, 'top of racks']]);
     sim('simL', picks);
     sim('simC', [['CMD-OUT'], ['CMD-FBA'], ['CMD-SWAP'], ['CMD-REFILL'], ['CMD-EMPTY'], ['CMD-RETURN'], ['CMD-COUNT'], ['CMD-BOXCOUNT'], ['CMD-UNDO'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]);
     app.querySelectorAll('.sim button').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); handle(b.dataset.c); if (!TOUCH) refocus(); }; });
@@ -364,9 +376,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       else if (sess.await === 'color') p = 'Which color? Tap Black, Brown or Grey below';
       else if (sess.await === 'reason') p = 'Why is the count different? Tap a reason below';
       else if (sess.await === 'ureason') p = 'Why are you undoing it? Tap a reason below';
-      else if (sess.await === 'bcnet') p = 'Second floor: pick the size, then tap the color';
-      else if (sess.await === 'bcqty' && sess.bc) p = 'How many ' + esc(netLabel(sess.net)) + ' in ' + esc(sess.bc.loc === FLOOR2 ? 'the second floor' : sess.bc.loc) + '? <span class="small">' + (sess.bc.nets.length > 1 ? 'Count only the ' + esc(sess.net.color) + ' bin · ' : '') + 'type the number (0 if none)</span>';
-      else if (sess.await === 'qty') p = esc({ OUT: 'How many going out?', FBA: 'How many for FBA?', RETURN: 'How many returned?', DAMAGED: 'How many damaged?', COUNT: 'How many in total, racks plus second floor?' }[sess.mode]) + ' <span class="small">' + esc(netLabel(sess.net)) + ' · type a number or scan QTY</span>';
+      else if (sess.await === 'bcnet') p = 'Top of racks: pick the size, then tap the color';
+      else if (sess.await === 'bcqty' && sess.bc) p = 'How many ' + esc(netLabel(sess.net)) + ' ' + esc(sess.bc.loc === FLOOR2 ? 'on top of the racks' : 'in ' + sess.bc.loc) + '? <span class="small">' + (sess.bc.nets.length > 1 ? 'Count only the ' + esc(sess.net.color) + ' bin · ' : '') + 'type the number (0 if none)</span>';
+      else if (sess.await === 'qty') p = esc({ OUT: 'How many going out?', FBA: 'How many for FBA?', RETURN: 'How many returned?', DAMAGED: 'How many damaged?', COUNT: 'How many in total, racks plus top of racks?' }[sess.mode]) + ' <span class="small">' + esc(netLabel(sess.net)) + ' · type a number or scan QTY</span>';
       else if (sess.mode) p = esc(sess.mode + ' mode · ' + MODE_HELP[sess.mode]);
       else p = 'Scan a box label or a batch label';
     }
@@ -409,6 +421,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var code = String(raw || '').trim().toUpperCase();
     if (!code) return;
     var adj = document.getElementById('adjust'); if (adj && !/^\d+$/.test(code)) adj.innerHTML = '';
+    if (code === '2F') code = FLOOR2; // labels printed before 11 Nov 2026
     if (/^EMP-\d+$/.test(code)) {
       var w = worker(code); if (!w) { fb('Unknown badge <b>' + esc(code) + '</b>. ' + (sheetOn() ? 'Add it to the Workers tab of the Google Sheet.' : 'Add it in Settings.'), 'bad'); return; }
       sess.emp = code; S.settings.me = code; save(); sess.mode = null; sess.await = null; fb('Hello ' + esc(w.name) + '.', 'ok'); paint(); return;
@@ -449,14 +462,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     };
     paint();
   }
-  var MODE_HELP = { OUT: 'scan the PICK box', FBA: 'scan a box label or 2F', RETURN: 'scan the PICK box', DAMAGED: 'scan the PICK box', COUNT: 'scan any box of the net', BOXCOUNT: 'scan a shelf label (or 2F), then type how many nets are in that box.',
-    SWAP: 'scan the backup box you are bringing down', REFILL: 'scan the empty box you are filling from the second floor', EMPTY: 'scan the box that just went empty' };
+  var MODE_HELP = { OUT: 'scan the PICK box', FBA: 'scan a box label or TOP', RETURN: 'scan the PICK box', DAMAGED: 'scan the PICK box', COUNT: 'scan any box of the net', BOXCOUNT: 'scan a shelf label (or TOP), then type how many nets are in that box.',
+    SWAP: 'scan the backup box you are bringing down', REFILL: 'scan the empty box you are filling from the top of the racks', EMPTY: 'scan the box that just went empty' };
   function fmtD(iso) { return iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : 'date unknown'; }
   function boxRec(code) { return S.boxes[code] || null; } // null = not tracked yet (treated as full, date unknown)
   function isEmpty(code) { var r = boxRec(code); return !!(r && r.state === 'empty'); }
   function setBox(code, rec, why) { rec.at = now(); rec.by = sess.emp; S.boxes[code] = rec; }
-  function oldest2F(n) { // oldest batch that went to the second floor: refills take this first
-    return Object.values(S.batches).filter(function (b) { return b.net === n.id && b.stage >= 6 && b.loc === FLOOR2; }).sort(function (a, b) { return a.created < b.created ? -1 : 1; })[0] || null;
+  function oldest2F(n) { // oldest batch that went to the top of the racks: refills take this first
+    return Object.values(S.batches).filter(function (b) { return b.net === n.id && b.stage >= 6 && (b.loc === FLOOR2 || b.loc === '2F'); }).sort(function (a, b) { return a.created < b.created ? -1 : 1; })[0] || null;
   }
   function fullBackups(n) { // backups holding stock, oldest first
     return (n.backups || []).filter(function (c) { return !isEmpty(c); }).sort(function (a, b) { var x = (boxRec(a) || {}).made || '9', y = (boxRec(b) || {}).made || '9'; return x < y ? -1 : x > y ? 1 : sideOrder(a, b); });
@@ -471,29 +484,29 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   function scanBox(code) {
     var box = BOXES[code], list = BY_ID[code] ? [BY_ID[code]] : netsAt(code);
-    // ---- rack-in after Pack: batch goes to an EMPTY home box or to the second floor ----
+    // ---- rack-in after Pack: batch goes to an EMPTY home box or to the top of the racks ----
     if (sess.await === 'loc' && sess.wo) {
       var b = S.batches[sess.wo], n = BY_ID[b.net];
       if (code !== FLOOR2) {
-        if (!box || box.nets.indexOf(n.id) < 0) { fb('Wrong box. <code>' + esc(code) + '</code> is not a home of ' + esc(netLabel(n)) + '. Use <code>' + esc(homeOf(n).join(', ')) + '</code> or the second floor (scan <b>2F</b>).', 'bad'); return; }
+        if (!box || box.nets.indexOf(n.id) < 0) { fb('Wrong box. <code>' + esc(code) + '</code> is not a home of ' + esc(netLabel(n)) + '. Use <code>' + esc(homeOf(n).join(', ')) + '</code> or the top of the racks (scan <b>TOP</b>).', 'bad'); return; }
         if (box.kind === 'own' && !isEmpty(code)) {
           var empt = homeOf(n).filter(isEmpty);
-          fb('First made, first shipped: <code>' + esc(code) + '</code> still has older nets (' + esc(fmtD((boxRec(code) || {}).made)) + '). New nets never go on top. ' + (empt.length ? 'Use the empty box <code>' + esc(empt.join(', ')) + '</code>' : 'Put them on the second floor (scan <b>2F</b>)') + '.', 'bad'); return;
+          fb('First made, first shipped: <code>' + esc(code) + '</code> still has older nets (' + esc(fmtD((boxRec(code) || {}).made)) + '). New nets never go on top. ' + (empt.length ? 'Use the empty box <code>' + esc(empt.join(', ')) + '</code>' : 'Put them on top of the racks (scan <b>TOP</b>)') + '.', 'bad'); return;
         }
       }
       var own = code !== FLOOR2 && box.kind === 'own', pbx = own ? snapBoxes([code]) : {}, st = {}; st[n.id] = -b.good;
       b.stage = 6; b.loc = code; S.stock[n.id] = onHand(n.id) + b.good;
       if (own) setBox(code, { state: 'full', net: n.id, wo: b.id, made: b.created });
       b.history.push({ stage: 6, by: sess.emp, qty: b.good, rej: 0, t: now(), loc: code });
-      var iev = addLog({ type: 'IN', who: sess.emp, wo: b.id, net: n.id, qty: b.good, loc: code, made: b.created, note: code === FLOOR2 ? 'Rack-in · second floor' : 'Rack-in' });
+      var iev = addLog({ type: 'IN', who: sess.emp, wo: b.id, net: n.id, qty: b.good, loc: code, made: b.created, note: code === FLOOR2 ? 'Rack-in · top of racks' : 'Rack-in' });
       remember(iev, { stock: st, batch: { wo: b.id, prev: { stage: 5, good: b.good, loc: null } }, boxes: pbx });
-      save(); fb('<b>' + b.good + ' nets in</b> at <code>' + esc(code === FLOOR2 ? 'second floor' : code) + '</code>. ' + esc(netLabel(n)) + ' now ' + onHand(n.id) + ' in total.', 'ok');
+      save(); fb('<b>' + b.good + ' nets in</b> at <code>' + esc(code === FLOOR2 ? 'top of racks' : code) + '</code>. ' + esc(netLabel(n)) + ' now ' + onHand(n.id) + ' in total.', 'ok');
       sess.wo = null; sess.await = null; paint(); return;
     }
     if (sess.mode === 'BOXCOUNT') { doBoxCount(code, box, list); return; }
     if (code === FLOOR2) {
-      if (sess.mode === 'FBA') { fb('Second floor. Now scan the product or a box label of the net going to FBA.', 'warn'); return; }
-      fb('<b>2F</b> is the second floor. Use it at rack-in (after Pack) for bulk stock.', 'warn'); return;
+      if (sess.mode === 'FBA') { fb('Top of racks. Now scan the product or a box label of the net going to FBA.', 'warn'); return; }
+      fb('<b>TOP</b> is the top of the racks. Use it at rack-in (after Pack) for bulk stock.', 'warn'); return;
     }
     var mode = sess.mode;
     if (mode === 'SWAP') { doSwap(code, list); return; }
@@ -525,8 +538,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (!box) { fb('Scan a backup box label.', 'bad'); return; }
     if (box.role === 'pick') {
       var fb1 = fullBackups(n);
-      if (!(n.backups || []).length) { fb(esc(list.length > 1 ? n.size : netLabel(n)) + ' has no backup box. Fill it from the second floor: scan REFILL, then this box.', 'warn'); return; }
-      fb(fb1.length ? 'Bring down <code>' + esc(fb1[0]) + '</code>' + ((boxRec(fb1[0]) || {}).made ? ' (made ' + esc(fmtD(boxRec(fb1[0]).made)) + ', the oldest)' : '') + ' and scan it.' : 'All backups are empty. Use REFILL from the second floor.', 'warn'); return;
+      if (!(n.backups || []).length) { fb(esc(list.length > 1 ? n.size : netLabel(n)) + ' has no backup box. Fill it from the top of the racks: scan REFILL, then this box.', 'warn'); return; }
+      fb(fb1.length ? 'Bring down <code>' + esc(fb1[0]) + '</code>' + ((boxRec(fb1[0]) || {}).made ? ' (made ' + esc(fmtD(boxRec(fb1[0]).made)) + ', the oldest)' : '') + ' and scan it.' : 'All backups are empty. Use REFILL from the top of the racks.', 'warn'); return;
     }
     var pick = n.pick, fb2 = fullBackups(n);
     if (isEmpty(code)) { fb('<code>' + esc(code) + '</code> is marked empty.' + (fb2.length ? ' Use <code>' + esc(fb2[0]) + '</code>.' : ' Fill it with REFILL.'), 'bad'); return; }
@@ -545,9 +558,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var made = srcs.map(function (x) { return x[1] ? x[1].created : ''; }).filter(Boolean).sort()[0] || null;
     var pr = snapBoxes([code]);
     setBox(code, { state: 'full', net: box.kind === 'own' ? list[0].id : '', wo: srcs[0][1] ? srcs[0][1].id : '', made: made });
-    remember(addLog({ type: 'REFILL', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, wo: srcs[0][1] ? srcs[0][1].id : '', made: made || '', note: 'Refill from second floor' + (box.kind === 'bin' ? ' · 3 bins, new nets to the back' : '') }), { boxes: pr });
+    remember(addLog({ type: 'REFILL', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, wo: srcs[0][1] ? srcs[0][1].id : '', made: made || '', note: 'Refill from top of racks' + (box.kind === 'bin' ? ' · 3 bins, new nets to the back' : '') }), { boxes: pr });
     save();
-    fb('<b>Refill</b> <code>' + esc(code) + '</code> from the second floor' + (box.kind === 'bin' ? ': top up each color bin, new nets at the back. ' : '. ') + srcs.map(function (x) { return x[1] ? esc(x[0].color) + ': take batch <b>' + esc(x[1].id) + '</b> (made ' + esc(fmtD(x[1].created)) + ', the oldest)' : ''; }).filter(Boolean).join(' · '), 'ok'); paint();
+    fb('<b>Refill</b> <code>' + esc(code) + '</code> from the top of the racks' + (box.kind === 'bin' ? ': top up each color bin, new nets at the back. ' : '. ') + srcs.map(function (x) { return x[1] ? esc(x[0].color) + ': take batch <b>' + esc(x[1].id) + '</b> (made ' + esc(fmtD(x[1].created)) + ', the oldest)' : ''; }).filter(Boolean).join(' · '), 'ok'); paint();
   }
   function applyQty(q, reason) {
     if (sess.await === 'bcqty' && sess.bc) { recordBoxCount(q); return; }
@@ -588,7 +601,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function boxSig(r) { return r ? (r.state || 'full') + '|' + (r.made || '') : 'none'; }
   function undoWhat(ev) {
     var n = BY_ID[ev.net];
-    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type, ev.qty != null && ev.type !== 'STAGE' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'second floor' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
+    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type, ev.qty != null && ev.type !== 'STAGE' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
   }
   // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
   function remember(ev, r) {
@@ -681,10 +694,10 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var floor = Object.keys(S.counts).filter(function (k) { return k.indexOf(FLOOR2 + '|') === 0; }).length;
     return { done: done, total: codes.length, floor: floor };
   }
-  function countProgressText() { var p = countProgress(); return p.done + ' of ' + p.total + ' boxes counted' + (p.floor ? ', ' + p.floor + ' nets counted on the second floor' : '') + '.'; }
+  function countProgressText() { var p = countProgress(); return p.done + ' of ' + p.total + ' boxes counted' + (p.floor ? ', ' + p.floor + ' nets counted on top of the racks' : '') + '.'; }
   function doBoxCount(code, box, list) {
     if (code === FLOOR2) { chooseFloorNet(); return; }
-    if (!box) { fb('In box count, scan a shelf label, or <b>2F</b> for the second floor.', 'bad'); return; }
+    if (!box) { fb('In box count, scan a shelf label, or <b>TOP</b> for the top of the racks.', 'bad'); return; }
     if (window.ArmorXCam) window.ArmorXCam.close();
     sess.bc = { loc: code, nets: list.map(function (n) { return n.id; }), i: 0 };
     askBoxQty('');
@@ -695,7 +708,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var adj = document.getElementById('adjust'), sizes = Array.from(new Set(NETS.map(function (n) { return n.size; })));
     adj.innerHTML = '<div class="qtyrow"><label class="f">Size<select id="bcSize">' + sizes.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></label>' +
       COLORS.map(function (c) { return '<button type="button" class="btn colorbtn" data-col="' + c + '"><span class="sw sw-' + c + '"></span>' + c + '</button>'; }).join('') + '</div>';
-    fb('<b>Second floor.</b> Pick the size and tap the color, then type how many of that net are on the second floor in total.', 'ok');
+    fb('<b>Top of racks.</b> Pick the size and tap the color, then type how many of that net are on top of the racks in total.', 'ok');
     adj.querySelectorAll('[data-col]').forEach(function (b) { b.onclick = function (e) {
       e.stopPropagation(); var sz = document.getElementById('bcSize').value, n = NETS.filter(function (x) { return x.size === sz && x.color === b.dataset.col; })[0];
       if (!n) { toast('That size has no ' + b.dataset.col + ' net.'); return; }
@@ -705,13 +718,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function askBoxQty(before) {
     var bc = sess.bc, n = BY_ID[bc.nets[bc.i]], prev = S.counts[countKey(bc.loc, n.id)], bx = BOXES[bc.loc];
     sess.net = n; sess.loc = bc.loc; sess.await = 'bcqty';
-    fb(before + '<code>' + esc(bc.loc === FLOOR2 ? '2F' : bc.loc) + '</code> · ' + (bx ? (bx.role === 'pick' ? 'PICK' : 'BACKUP') + (bc.nets.length > 1 ? ' · 3-bin box, color ' + (bc.i + 1) + ' of ' + bc.nets.length : '') + ' · ' : 'second floor · ') + '<b>' + esc(netLabel(n)) + '</b>. ' +
+    fb(before + '<code>' + esc(bc.loc === FLOOR2 ? 'TOP' : bc.loc) + '</code> · ' + (bx ? (bx.role === 'pick' ? 'PICK' : 'BACKUP') + (bc.nets.length > 1 ? ' · 3-bin box, color ' + (bc.i + 1) + ' of ' + bc.nets.length : '') + ' · ' : 'top of racks · ') + '<b>' + esc(netLabel(n)) + '</b>. ' +
       (prev ? 'Already counted: <b>' + prev.qty + '</b> by ' + esc(wname(prev.by)) + '. A new number replaces it.' : 'Count the nets and type the number.'), 'ok');
     paint(); showOnPhone('qbar');
   }
   function recordBoxCount(q) {
     var bc = sess.bc, n = BY_ID[bc.nets[bc.i]], bx = BOXES[bc.loc];
-    if (bx && q > bx.cap * 2) { fb('<b>' + q + '</b> is more than this box can hold (' + bx.cap + '). Count again and type the number.', 'bad'); return; }
+    if (bx && q > bx.cap * 2 && bc.sure !== q) { bc.sure = q; fb('<b>' + q + '</b> is a lot for this box (it was planned for ' + bx.cap + '). If that is right, type ' + q + ' again.', 'warn'); return; } // typo guard, never a block
     var key = countKey(bc.loc, n.id), prev = clone(S.counts[key] || null), pc = {}; pc[key] = prev;
     S.counts[key] = { box: bc.loc, net: n.id, qty: q, at: now(), by: sess.emp };
     remember(addLog({ type: 'BOXCOUNT', who: sess.emp, net: n.id, qty: q, loc: bc.loc, note: 'Box count' + (prev ? ' (replaces ' + prev.qty + ')' : '') }), { counts: pc });
@@ -720,7 +733,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     bc.i++;
     if (bc.i < bc.nets.length) { askBoxQty(said); return; }
     sess.bc = null; sess.await = null; sess.net = null;
-    fb((bc.nets.length > 1 ? said : '') + '<b>' + esc(bc.loc === FLOOR2 ? netLabel(n) + ' on the second floor' : bc.loc) + ': ' + q + '</b> counted. ' + countProgressText() + ' Scan the next ' + (bc.loc === FLOOR2 ? 'shelf label or 2F' : 'shelf label') + '.', 'ok');
+    fb((bc.nets.length > 1 ? said : '') + '<b>' + esc(bc.loc === FLOOR2 ? netLabel(n) + ' on top of the racks' : bc.loc) + ': ' + q + '</b> counted. ' + countProgressText() + ' Scan the next ' + (bc.loc === FLOOR2 ? 'shelf label or TOP' : 'shelf label') + '.', 'ok');
     paint();
   }
 
@@ -729,13 +742,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewStock() {
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><div class="row" style="align-items:flex-end"><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label><button class="btn" id="cntPrint">Print count sheet</button><button class="btn primary" id="cntMode">Enter counts</button></div></div>' +
       '<div class="card" id="bcCard"></div>' +
-      '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted on the racks and on the second floor (2F). Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is. If any count is different from the system, pick a reason before saving.</div>' +
+      '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted in the boxes and on top of the racks. Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is. If any count is different from the system, pick a reason before saving.</div>' +
       '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;align-items:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span>' + reasonSelect('cntWhy') + '<button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
     var counting = false;
     function draw() {
       var q = document.getElementById('q').value.trim().toLowerCase();
       var list = walkSorted().filter(function (n) { return !q || (n.size + ' ' + n.color + ' ' + n.home + ' ' + n.skus).toLowerCase().indexOf(q) >= 0; });
-      document.getElementById('th').innerHTML = counting ? '<tr><th>Pick box</th><th>Net</th><th>In system</th><th>Counted on racks</th><th>Counted on 2F</th><th>New total</th></tr>'
+      document.getElementById('th').innerHTML = counting ? '<tr><th>Pick box</th><th>Net</th><th>In system</th><th>Counted in boxes</th><th>Counted on top</th><th>New total</th></tr>'
         : '<tr><th>Net</th><th>Rack location</th><th>In total</th><th>Rack space</th><th>Refill at</th><th>Sells / day</th><th>Days left</th><th>Status</th><th>Amazon SKUs</th></tr>';
       document.getElementById('tb').innerHTML = list.map(function (n) {
         var oh = onHand(n.id), st = status(n), days = n.perDay ? Math.floor(oh / n.perDay) : '—';
@@ -764,13 +777,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       rows.forEach(function (x) {
         var n = x.n, before = onHand(n.id), tot = x.r + x.f, diff = tot !== before;
         S.stock[n.id] = tot; k++;
-        addLog({ type: 'COUNT', who: who, net: n.id, qty: tot, loc: n.pick, reason: diff ? why : '', note: 'Count sheet: racks ' + x.r + ' + 2F ' + x.f + ' (was ' + before + ')' + (diff ? ' · reason: ' + why : ' · matches') });
+        addLog({ type: 'COUNT', who: who, net: n.id, qty: tot, loc: n.pick, reason: diff ? why : '', note: 'Count sheet: boxes ' + x.r + ' + top ' + x.f + ' (was ' + before + ')' + (diff ? ' · reason: ' + why : ' · matches') });
       });
       save(); toast(k ? k + ' counts saved.' : 'Nothing filled in.'); setMode(false);
     };
     document.getElementById('cntPrint').onclick = function () {
       var t = document.createElement('div'); t.className = 'sheet';
-      t.innerHTML = '<h3>ArmorX doornet count sheet · ' + esc(new Date().toLocaleDateString()) + ' · counted by ____________</h3><table><thead><tr><th>Pick box</th><th>Net</th><th>Backups</th><th>Racks</th><th>2F</th><th>Total</th></tr></thead><tbody>' +
+      t.innerHTML = '<h3>ArmorX doornet count sheet · ' + esc(new Date().toLocaleDateString()) + ' · counted by ____________</h3><table><thead><tr><th>Pick box</th><th>Net</th><th>Other boxes</th><th>In boxes</th><th>On top</th><th>Total</th></tr></thead><tbody>' +
         walkSorted().map(function (n) { return '<tr><td>' + esc(n.pick) + '</td><td>' + esc(netLabel(n)) + (n.kind === 'bin' ? ' (bin)' : '') + '</td><td>' + esc((n.backups || []).join(' ')) + '</td><td></td><td></td><td></td></tr>'; }).join('') + '</tbody></table>';
       printLabels([t], 'A4P');
     };
@@ -787,7 +800,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (v === 'Other') return t ? 'Other: ' + t : null;
     return t ? v + ': ' + t : v;
   }
-  // box count review: per net, every home box counted -> new total = boxes + second floor
+  // box count review: per net, every home box counted -> new total = boxes + top of racks
   function countRows() {
     return walkSorted().map(function (n) {
       var homes = homeOf(n), got = homes.filter(function (c) { return S.counts[countKey(c, n.id)]; }), fl = S.counts[countKey(FLOOR2, n.id)];
@@ -802,12 +815,12 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var diff = ready.filter(function (x) { return x.total !== onHand(x.n.id); });
     var left = Object.keys(BOXES).filter(function (c) { return !boxCounted(c); }).sort(sideOrder);
     el.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><h3>Box count <span class="small muted">(opening count, day 14 count)</span></h3>' + (rows.length ? '<button class="btn" id="bcOpen">' + (open ? 'Hide' : 'Review and apply') + '</button>' : '') + '</div>' +
-      '<div class="small">' + (rows.length ? '<b>' + p.done + ' of ' + p.total + '</b> boxes counted' + (p.floor ? ', ' + p.floor + ' nets on the second floor' : '') + '. Counts change stock only when you press Apply.' : 'No box counts yet. On a phone: Scan station → <b>Count boxes</b>, scan each shelf label and type how many are in it. Scan <b>2F</b> for the second floor.') + '</div>' +
+      '<div class="small">' + (rows.length ? '<b>' + p.done + ' of ' + p.total + '</b> boxes counted' + (p.floor ? ', ' + p.floor + ' nets on top of the racks' : '') + '. Counts change stock only when you press Apply.' : 'No box counts yet. On a phone: Scan station → <b>Count boxes</b>, scan each shelf label and type how many are in it. Scan <b>TOP</b> for the top of the racks.') + '</div>' +
       (open ? '<details class="small"' + (left.length && left.length <= 40 ? ' open' : '') + '><summary>' + left.length + ' boxes not counted yet</summary><div class="mono">' + (left.map(esc).join(' ') || 'none') + '</div></details>' +
-        '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In system</th><th>Boxes</th><th>2F</th><th>New total</th><th>Change</th></tr></thead><tbody>' +
+        '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In system</th><th>Boxes</th><th>On top</th><th>New total</th><th>Change</th></tr></thead><tbody>' +
         ready.map(function (x) { var d = x.total - onHand(x.n.id); return '<tr><td><span class="sw sw-' + x.n.color + '"></span>' + esc(netLabel(x.n)) + '</td><td>' + onHand(x.n.id) + '</td><td>' + x.racks + '</td><td>' + (x.fl ? x.floor : '<span class="muted">0</span>') + '</td><td><b>' + x.total + '</b></td><td>' + (d ? '<b>' + (d > 0 ? '+' : '') + d + '</b>' : '<span class="muted">same</span>') + '</td></tr>'; }).join('') +
         (part.length ? '<tr><td colspan="6" class="small"><b>Not applied yet (' + part.length + ' nets), boxes still to count:</b> ' + part.map(function (x) { return esc(netLabel(x.n)) + ' <code>' + esc(x.missing.join(' ')) + '</code>'; }).join(' · ') + '</td></tr>' : '') +
-        '</tbody></table></div><div class="small muted">A net is applied when all its boxes (pick and backups) are counted. Its second floor count is added if one was entered, otherwise the second floor counts as 0. Boxes counted 0 are marked empty and go on the refill list.</div>' +
+        '</tbody></table></div><div class="small muted">A net is applied when all its boxes are counted. Its count on top of the racks is added if one was entered, otherwise it counts as 0 on top. Boxes counted 0 are marked empty and go on the refill list. Part-full boxes are fine: the app keeps one total per net.</div>' +
         '<div class="row" style="justify-content:flex-end;align-items:flex-end"><span class="small muted" id="bcMsg"></span>' + (diff.length ? reasonSelect('bcWhy') : '') + '<button class="btn primary" id="bcApply"' + (ready.length ? '' : ' disabled') + '>Apply ' + ready.length + ' counts</button></div>' : '');
     var ob = document.getElementById('bcOpen'); if (ob) ob.onclick = function () { drawBoxCount(!open); };
     var ab = document.getElementById('bcApply'); if (ab) ab.onclick = function () { applyBoxCount(ready, diff.length ? readReason('bcWhy') : '', diff.length); };
@@ -821,7 +834,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     ready.forEach(function (x) {
       var n = x.n, before = onHand(n.id), d = x.total !== before;
       S.stock[n.id] = x.total;
-      addLog({ type: 'COUNT', who: who, net: n.id, qty: x.total, loc: n.pick, reason: d ? why : '', note: 'Box count: boxes ' + x.racks + ' + 2F ' + x.floor + ' (was ' + before + ')' + (d ? ' · reason: ' + why : ' · matches') });
+      addLog({ type: 'COUNT', who: who, net: n.id, qty: x.total, loc: n.pick, reason: d ? why : '', note: 'Box count: boxes ' + x.racks + ' + top ' + x.floor + ' (was ' + before + ')' + (d ? ' · reason: ' + why : ' · matches') });
       homeOf(n).forEach(function (c) { used.push(countKey(c, n.id)); boxes[c] = 1; });
       if (x.fl) used.push(countKey(FLOOR2, n.id));
     });
@@ -875,7 +888,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewRacks() {
     var sides = window.SIDES || [], COLS = window.RACK_COLS || 6, RNG = window.SIDE_RANGES || {};
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Rack map</h2><label class="f">Find a size<input id="rq" placeholder="e.g. 205x90"></label></div>' +
-      '<div class="note small">Sizes in number order. Popular sizes on R2–R4, slow sizes on R1/R5, R6 is backup only. 210×100 is in AR columns 1–3, picked from R3.</div>' +
+      '<div class="note small">Sizes in number order. Popular sizes on R2–R4, slow sizes on R1/R5. Extra stock sits on top of the racks. 210×100 is in AR columns 1–3, picked from R3.</div>' +
       '<div class="legend"><span><i style="background:var(--soft-ok)"></i>Pick box, healthy</span><span><i style="background:var(--soft-warn)"></i>Low</span><span><i style="background:var(--soft-bad)"></i>Out / box empty</span><span><i style="border:1px dashed var(--ink)"></i>Backup</span></div>' +
       '<div class="card small" id="boxInfo">Tap a box to see what is in it.</div><div class="sides" id="sides"></div>');
     var out = '';
@@ -883,7 +896,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       var rg = RNG[s] ? RNG[s][0] + ' – ' + RNG[s][1] + (s === 'AR' ? ' + 210x100' : '') : '';
       out += '<div class="side"><div><span class="tag' + (/R$/.test(s) ? ' r' : '') + '">' + s + '</span> <span class="small muted">' + esc(rg) + '</span></div><div class="rack" style="grid-template-columns:30px repeat(' + COLS + ',minmax(0,1fr))"><div></div>';
       for (var c = 1; c <= COLS; c++) out += '<div class="h">C' + c + '</div>';
-      for (var r = 6; r >= 1; r--) {
+      for (var r = USE_R6 ? 6 : 5; r >= 1; r--) {
         out += '<div class="h">R' + r + '</div>';
         for (var c2 = 1; c2 <= COLS; c2++) {
           var code = s + '-C' + c2 + '-R' + r, bx = BOXES[code];
@@ -906,13 +919,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     document.getElementById('rq').oninput = function () { var v = this.value.trim().toLowerCase(); app.querySelectorAll('.bx').forEach(function (b) { b.classList.toggle('hl', !!v && (b.dataset.s || '').indexOf(v) === 0); }); };
   }
 
-  // ---------- refill list (every 3-4 days, from the second floor) ----------
+  // ---------- refill list (every 3-4 days, from the top of the racks) ----------
   function viewRefill() {
     var empt = Object.keys(BOXES).filter(isEmpty).sort(sideOrder);
     var low = NETS.filter(function (n) { return status(n) !== 'ok'; }).sort(function (a, b) { return sideOrder(a.pick, b.pick); });
     var untracked = Object.keys(BOXES).filter(function (c) { return !boxRec(c); }).length;
-    h('<h2>Refill list</h2><div class="note">Walk the racks in order (AR → AL → BR → BL → CR → CL). For each empty box, take the <b>oldest</b> batch from the second floor, fill the box, then scan <b>REFILL</b> and the box. Never pour new nets on top of old ones.</div>' +
-      '<div class="card"><h3>Empty boxes to fill (' + empt.length + ')</h3><div class="tablewrap"><table><thead><tr><th>Box</th><th>Type</th><th>Net</th><th>Take from second floor</th></tr></thead><tbody>' +
+    h('<h2>Refill list</h2><div class="note">Walk the racks in order (AR → AL → BR → BL → CR → CL). For each empty box, take the <b>oldest</b> batch from the top of the racks, fill the box, then scan <b>REFILL</b> and the box. Never pour new nets on top of old ones.</div>' +
+      '<div class="card"><h3>Empty boxes to fill (' + empt.length + ')</h3><div class="tablewrap"><table><thead><tr><th>Box</th><th>Type</th><th>Net</th><th>Take from top of racks</th></tr></thead><tbody>' +
       (empt.map(function (c) { var bx = BOXES[c], list = netsAt(c); return '<tr><td><code>' + c + '</code></td><td>' + (bx.role === 'pick' ? 'Pick' : 'Backup') + (bx.kind === 'bin' ? ' · 3 bins' : '') + '</td><td>' + list.map(function (n) { return '<span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + (bx.mix ? ' ×' + bx.mix[n.id] : ' ×' + bx.cap); }).join('<br>') + '</td><td>' + list.map(function (n) { var o = oldest2F(n); return o ? '<code>' + o.id + '</code> made ' + esc(fmtD(o.created)) : '<span class="muted">no batch on 2F</span>'; }).join('<br>') + '</td></tr>'; }).join('') || '<tr><td colspan="4" class="muted">No empty boxes. Pickers scan EMPTY when a box runs out, or SWAP when they bring a backup down.</td></tr>') +
       '</tbody></table></div></div>' +
       '<div class="card"><h3>Low in total, make more (' + low.length + ')</h3><div class="tablewrap"><table><thead><tr><th>Net</th><th>Pick box</th><th>In total</th><th>Refill at</th></tr></thead><tbody>' +
@@ -925,7 +938,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var sides = window.SIDES || [];
     h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels and box tags (also 50 × 25 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Worker badges</h3><button class="btn primary" id="pW">Print all badges</button></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevW"></div></details></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the second-floor label 2F.</div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevC"></div></details></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the TOP label (extra stock on top of the racks).</div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevC"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs (3 per A4)</h3><button class="btn primary" id="pS">Print all 6 signs (2 pages)</button></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Prints 3 per A4 page, portrait. Cut along the borders and laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Shelf labels</h3><div class="row" style="align-items:flex-end"><label class="f">Side<select id="pSide">' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pL">Print this side</button></div></div><div class="small muted" id="cntL"></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevL"></div></details></div>');
     S.workers.forEach(function (w) { document.getElementById('prevW').appendChild(badgeLabel(w)); });
