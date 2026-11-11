@@ -521,7 +521,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (own) setBox(code, { state: 'full', net: n.id, wo: b.id, made: b.created });
       b.history.push({ stage: 6, by: sess.emp, qty: b.good, rej: 0, t: now(), loc: code });
       var iev = addLog({ type: 'IN', who: sess.emp, wo: b.id, net: n.id, qty: b.good, loc: code, made: b.created, note: code === FLOOR2 ? 'Rack-in · top of racks' : 'Rack-in' });
-      remember(iev, { stock: st, batch: { wo: b.id, prev: { stage: 5, good: b.good, loc: null } }, boxes: pbx });
+      var ia = shelfAdd(code, n.id, b.good), ipa = {}; if (ia) ipa[ia.key] = ia;
+      remember(iev, { stock: st, batch: { wo: b.id, prev: { stage: 5, good: b.good, loc: null } }, boxes: pbx, putAdd: ipa });
       save(); fb('<b>' + b.good + ' nets in</b> at <code>' + esc(code === FLOOR2 ? 'top of racks' : code) + '</code>. ' + esc(netLabel(n)) + ' now ' + onHand(n.id) + ' in total.', 'ok');
       sess.wo = null; sess.await = null; paint(); return;
     }
@@ -606,7 +607,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     else if (mode === 'COUNT') S.stock[n.id] = q;
     var ev = addLog({ type: mode, who: sess.emp, net: n.id, qty: q, loc: sess.loc, reason: reason || '', note: mode === 'COUNT' ? 'Counted (was ' + before + ')' + (reason ? ' · reason: ' + reason : ' · matches') : ({ OUT: 'Order pick', FBA: 'FBA shipment', RETURN: 'Customer return · good', DAMAGED: 'Customer return · damaged, not restocked' }[mode]) });
     var sd = {}; if (onHand(n.id) !== before) sd[n.id] = before - onHand(n.id);
-    remember(ev, { stock: sd });
+    var sa = mode === 'OUT' || mode === 'FBA' ? shelfAdd(sess.loc, n.id, -q, true) : mode === 'RETURN' ? shelfAdd(sess.loc, n.id, q) : null, spa = {}; if (sa && sa.add) spa[sa.key] = sa;
+    remember(ev, { stock: sd, putAdd: spa });
     save();
     var after = onHand(n.id), warn = after <= n.refillAt && (mode === 'OUT' || mode === 'FBA');
     fb('<b>' + esc(mode) + ' ' + q + '</b> · ' + esc(netLabel(n)) + ' · now ' + after + ' in total.' + (warn ? ' <b>Below refill level.</b>' : ''), warn ? 'warn' : 'ok');
@@ -625,7 +627,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function boxSig(r) { return r ? (r.state || 'full') + '|' + (r.made || '') : 'none'; }
   function undoWhat(ev) {
     var n = BY_ID[ev.net];
-    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type === 'BOXADD' ? 'Put away +' + ev.qty : ev.type, ev.qty != null && ev.type !== 'STAGE' && ev.type !== 'BOXADD' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
+    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type === 'BOXADD' ? 'Put away +' + ev.qty : ev.type === 'BOXQTY' ? 'Box change ' + ev.was + ' → ' + ev.qty : ev.type, ev.qty != null && ev.type !== 'STAGE' && ev.type !== 'BOXADD' && ev.type !== 'BOXQTY' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
   }
   // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
   function remember(ev, r) {
@@ -740,7 +742,35 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   var PA_V = 7; // Code.gs version where a put away (BOXADD) adds to stock straight away and keeps the number per box
   var SIZES = Array.from(new Set(NETS.map(function (n) { return n.size; })));
   function boxCap(c, id) { var b = BOXES[c]; return b ? (b.mix ? b.mix[id] : b.cap) : 0; }
-  function counted(c, id) { var r = S.shelf[countKey(c, id)]; return r ? Number(r.qty) : 0; } // put away so far in that box
+  function counted(c, id) { var r = S.shelf[countKey(c, id)]; return r ? Number(r.qty) : 0; } // nets in that box now (put away, picks, box changes)
+  // change the number in a box (or TOP) by d, like Code.gs does. onlyIfKnown: a pick from a box with no number yet changes nothing
+  function shelfAdd(loc, id, d, onlyIfKnown) {
+    if (!loc || !d) return null; loc = loc === '2F' ? FLOOR2 : loc;
+    var k = countKey(loc, id), r = S.shelf[k];
+    if (!r) { if (onlyIfKnown || d < 0) return null; S.shelf[k] = { box: loc, net: id, qty: d, at: now(), by: sess.emp }; return { key: k, add: d, drop: true }; }
+    var a = Math.max(-Number(r.qty), d); r.qty = Number(r.qty) + a; r.at = now(); r.by = sess.emp;
+    return { key: k, add: a, drop: false };
+  }
+  function sheetV8() { return !sheetOn() || (S.sheetV || 0) >= BOXQTY_V; }
+  function boxTotal(c) { return (BOXES[c] ? BOXES[c].nets : []).reduce(function (a, id) { return a + counted(c, id); }, 0); }
+  function boxKnown(c) { return (BOXES[c] ? BOXES[c].nets : []).some(function (id) { return !!S.shelf[countKey(c, id)]; }); }
+  function inBoxes(id) { var n = BY_ID[id]; return homeOf(n).reduce(function (a, c) { return a + counted(c, id); }, 0); }
+  // A manager sets the number in one box (or TOP): stock moves by the difference. Also used row by row by the Excel upload.
+  var BOXQTY_V = 8;
+  function setBoxQty(loc, id, q, reason, upload) {
+    var n = BY_ID[id], k = countKey(loc, id), was = counted(loc, id), d = q - was, prev = !!S.shelf[k];
+    var own = loc !== FLOOR2 && BOXES[loc] && BOXES[loc].kind === 'own', pbx = loc !== FLOOR2 ? snapBoxes([loc]) : {};
+    S.shelf[k] = { box: loc, net: id, qty: q, at: now(), by: sess.emp };
+    S.stock[id] = Math.max(0, onHand(id) + d);
+    var state = '';
+    if (loc !== FLOOR2) { var tot = boxTotal(loc); if (tot === 0 && !isEmpty(loc)) state = 'empty'; else if (tot > 0 && isEmpty(loc)) state = 'full'; }
+    if (state) setBox(loc, state === 'empty' ? { state: 'empty' } : { state: 'full', net: own ? id : '', wo: '', made: null });
+    var ev = addLog({ type: 'BOXQTY', who: sess.emp, net: id, qty: q, was: was, loc: loc, reason: reason, upload: upload || '', boxState: state, boxNet: own ? id : '',
+      note: (upload ? 'Excel upload ' + upload + ': ' : 'Box change: ') + (loc === FLOOR2 ? 'top of racks' : loc) + ' ' + was + ' → ' + q + ' · reason: ' + reason });
+    var st = {}; st[id] = -d; var pa = {}; pa[k] = { add: d, drop: !prev };
+    if (!upload) remember(ev, { stock: st, putAdd: pa, boxes: state ? pbx : {} });
+    return { ev: ev, d: d, was: was, n: n };
+  }
   function paBox(n) { var hs = homeOf(n); for (var i = 0; i < hs.length; i++) if (counted(hs[i], n.id) < boxCap(hs[i], n.id)) return hs[i]; return n.pick; } // first box with room
   function locHint(c) {
     var m = /^([A-Z])([LR])-C(\d)-R(\d)$/.exec(c); if (!m) return '';
@@ -879,6 +909,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewStock() {
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><div class="row" style="align-items:flex-end"><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label><button class="btn" id="cntPrint">Print count sheet</button><button class="btn primary" id="cntMode">Enter counts</button></div></div>' +
       '<div class="card" id="bcCard"></div>' +
+      '<div class="card" id="xlCard"></div>' +
       '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted in the boxes and on top of the racks. Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is. If any count is different from the system, pick a reason before saving.</div>' +
       '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;align-items:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span>' + reasonSelect('cntWhy') + '<button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
     var counting = false;
@@ -926,6 +957,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     };
     document.getElementById('q').oninput = draw; draw();
     drawBoxCount(false);
+    drawExcel();
   }
   function reasonSelect(id) {
     return '<label class="f">Reason for changes<select id="' + id + '"><option value="">— pick a reason —</option>' + COUNT_REASONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select></label>' +
@@ -981,9 +1013,170 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (sum === 0 && !isEmpty(c)) { S.boxes[c] = { state: 'empty', at: now(), by: who }; addLog({ type: 'EMPTY', who: who, loc: c, note: 'Box count: empty' }); }
       else if (sum > 0 && isEmpty(c)) { var own = BOXES[c].kind === 'own' ? BOXES[c].nets[0] : ''; S.boxes[c] = { state: 'full', net: own, wo: '', made: null, at: now(), by: who }; addLog({ type: 'BOXSET', who: who, net: own, loc: c, state: 'full', note: 'Box count: ' + sum + ' nets in box' }); }
     });
-    used.forEach(function (k) { delete S.counts[k]; });
+    used.forEach(function (k) { var c = S.counts[k]; if (c) S.shelf[k] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: now(), by: who }; delete S.counts[k]; }); // the counted number is now the box's number
     addLog({ type: 'COUNTDONE', who: who, keys: used, note: 'Box count applied: ' + ready.length + ' nets' + (why ? ' · reason: ' + why : '') });
     S.undo = null; save(); toast(ready.length + ' counts applied.'); route();
+  }
+
+  // ---------- Excel: download the inventory (one row per net and box, plus top of racks), edit, upload ----------
+  var XL_COLS = ['Net ID', 'Size', 'Color', 'Box', 'Box type', 'In box', 'Net total now', 'Not in a box'];
+  function xlRows() {
+    var rows = [];
+    walkSorted().forEach(function (n) {
+      var nb = Math.max(0, onHand(n.id) - inBoxes(n.id) - counted(FLOOR2, n.id));
+      homeOf(n).concat([FLOOR2]).forEach(function (c) {
+        rows.push([n.id, n.size, n.color, c, c === FLOOR2 ? 'top of racks' : (BOXES[c].role === 'pick' ? 'pick' : 'backup') + (BOXES[c].kind === 'bin' ? ' (3 bins)' : ''), counted(c, n.id), onHand(n.id), nb]);
+      });
+    });
+    return rows;
+  }
+  // a tiny .xlsx writer (no packages): one sheet, plain cells, zip without compression
+  var CRC = (function () { var t = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zip(files) {
+    var enc = new TextEncoder(), parts = [], cd = [], off = 0;
+    function u16(v) { return [v & 255, (v >>> 8) & 255]; } function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+    files.forEach(function (f) {
+      var name = enc.encode(f[0]), data = enc.encode(f[1]), c = crc32(data);
+      var head = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(c), u32(data.length), u32(data.length), u16(name.length), u16(0));
+      parts.push(new Uint8Array(head), name, data);
+      cd.push(new Uint8Array([].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(c), u32(data.length), u32(data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), name);
+      off += head.length + name.length + data.length;
+    });
+    var cdLen = cd.reduce(function (a, x) { return a + x.length; }, 0);
+    return new Blob(parts.concat(cd, [new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cdLen), u32(off), u16(0)))]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+  function xmlEsc(v) { return String(v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function colName(i) { var s = ''; i++; while (i) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+  function xlsx(rows) {
+    var sheet = rows.map(function (row, ri) { return '<row r="' + (ri + 1) + '">' + row.map(function (v, ci) { var ref = colName(ci) + (ri + 1);
+      return typeof v === 'number' ? '<c r="' + ref + '"><v>' + v + '</v></c>' : '<c r="' + ref + '" t="inlineStr"' + (ri === 0 ? ' s="1"' : '') + '><is><t>' + xmlEsc(v) + '</t></is></c>'; }).join('') + '</row>'; }).join('');
+    return zip([
+      ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
+      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Inventory" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf fontId="1" applyFont="1"/></cellXfs></styleSheet>'],
+      ['xl/worksheets/sheet1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetData>' + sheet + '</sheetData></worksheet>']
+    ]);
+  }
+  // reading an .xlsx (from Excel or Google Sheets) or a .csv back in
+  function unzip(buf) {
+    var d = new DataView(buf), u8 = new Uint8Array(buf), e = buf.byteLength - 22;
+    while (e >= 0 && d.getUint32(e, true) !== 0x06054b50) e--;
+    if (e < 0) return Promise.reject(new Error('not an Excel file'));
+    var n = d.getUint16(e + 10, true), p = d.getUint32(e + 16, true), out = {}, jobs = [], dec = new TextDecoder();
+    for (var i = 0; i < n; i++) {
+      var meth = d.getUint16(p + 10, true), size = d.getUint32(p + 20, true), nl = d.getUint16(p + 28, true), el = d.getUint16(p + 30, true), cl = d.getUint16(p + 32, true), lo = d.getUint32(p + 42, true);
+      var name = dec.decode(u8.subarray(p + 46, p + 46 + nl)); p += 46 + nl + el + cl;
+      if (!/^xl\/(worksheets\/sheet\d+|sharedStrings|workbook)\.xml$|^xl\/_rels\/workbook\.xml\.rels$/.test(name)) continue;
+      var start = lo + 30 + d.getUint16(lo + 26, true) + d.getUint16(lo + 28, true), raw = u8.subarray(start, start + size);
+      jobs.push((function (name, meth, raw) {
+        if (meth === 0) { out[name] = dec.decode(raw); return Promise.resolve(); }
+        if (typeof DecompressionStream === 'undefined') return Promise.reject(new Error('this browser cannot open .xlsx files; save the file as CSV and upload that'));
+        return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text().then(function (t) { out[name] = t; });
+      })(name, meth, raw));
+    }
+    return Promise.all(jobs).then(function () { return out; });
+  }
+  function xlsxRows(files) {
+    var X = function (t) { return new DOMParser().parseFromString(t, 'application/xml'); }, ss = [];
+    if (files['xl/sharedStrings.xml']) Array.prototype.forEach.call(X(files['xl/sharedStrings.xml']).getElementsByTagName('si'), function (si) { ss.push(Array.prototype.map.call(si.getElementsByTagName('t'), function (t) { return t.textContent; }).join('')); });
+    var first = 'xl/worksheets/sheet1.xml';
+    if (files['xl/workbook.xml'] && files['xl/_rels/workbook.xml.rels']) { // the first sheet in the workbook, whatever its file name
+      var sh = X(files['xl/workbook.xml']).getElementsByTagName('sheet')[0], rid = sh && (sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+      Array.prototype.forEach.call(X(files['xl/_rels/workbook.xml.rels']).getElementsByTagName('Relationship'), function (rl) { if (rl.getAttribute('Id') === rid) first = 'xl/' + rl.getAttribute('Target').replace(/^\/?xl\//, '').replace(/^\//, ''); });
+    }
+    var doc = files[first] || files[Object.keys(files).filter(function (k) { return /worksheets\/sheet\d+\.xml$/.test(k); }).sort()[0]];
+    if (!doc) throw new Error('no sheet found in the file');
+    return Array.prototype.map.call(X(doc).getElementsByTagName('row'), function (row) {
+      var out = [];
+      Array.prototype.forEach.call(row.getElementsByTagName('c'), function (c) {
+        var ref = c.getAttribute('r') || '', col = 0, m = /^([A-Z]+)/.exec(ref);
+        if (m) for (var i = 0; i < m[1].length; i++) col = col * 26 + m[1].charCodeAt(i) - 64; col = m ? col - 1 : out.length;
+        var t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0], val = '';
+        if (t === 's') val = ss[Number(v ? v.textContent : -1)] || ''; else if (t === 'inlineStr') val = Array.prototype.map.call(c.getElementsByTagName('t'), function (x) { return x.textContent; }).join(''); else val = v ? v.textContent : '';
+        out[col] = val;
+      });
+      return out;
+    });
+  }
+  function csvRows(text) {
+    var rows = [], row = [], cell = '', q = false, sep = (text.split('\n')[0].match(/;/g) || []).length > (text.split('\n')[0].match(/,/g) || []).length ? ';' : ',';
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+      else if (ch === '"') q = true; else if (ch === sep) { row.push(cell); cell = ''; } else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; } else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  // compare the file with what the app has now: changes, and rows that cannot be used (with why)
+  function xlCompare(rows) {
+    var h = -1, ci = {};
+    for (var i = 0; i < Math.min(rows.length, 10); i++) { var low = (rows[i] || []).map(function (v) { return String(v || '').trim().toLowerCase(); }); if (low.indexOf('net id') >= 0 && low.indexOf('box') >= 0 && low.indexOf('in box') >= 0) { h = i; ['net id', 'box', 'in box'].forEach(function (k) { ci[k] = low.indexOf(k); }); break; } }
+    if (h < 0) return { error: 'The file needs the columns Net ID, Box and In box (download the inventory first and edit that file).' };
+    var changes = [], bad = [], seen = {};
+    rows.slice(h + 1).forEach(function (row, j) {
+      var line = h + j + 2, id = String(row[ci['net id']] || '').trim(), box = String(row[ci.box] || '').trim().toUpperCase(), raw = String(row[ci['in box']] == null ? '' : row[ci['in box']]).trim();
+      if (!id && !box && !raw) return;
+      if (box === '2F' || box === 'TOP OF RACKS') box = FLOOR2;
+      var n = BY_ID[id];
+      if (!n) { bad.push([line, id || '(empty)', 'unknown Net ID']); return; }
+      if (box !== FLOOR2 && homeOf(n).indexOf(box) < 0) { bad.push([line, id + ' ' + box, 'this box is not a home of ' + netLabel(n) + ' (its boxes: ' + homeOf(n).join(', ') + ', or TOP)']); return; }
+      if (raw === '') return; // left empty: keep as it is
+      if (!/^\d+(\.0+)?$/.test(raw) || Number(raw) > 500) { bad.push([line, id + ' ' + box, '"' + raw + '" is not a whole number of nets (0 to 500)']); return; }
+      var k = countKey(box, id); if (seen[k]) { bad.push([line, id + ' ' + box, 'this net and box is in the file twice']); return; } seen[k] = 1;
+      var q = Math.round(Number(raw)), now = counted(box, id);
+      if (q !== now) changes.push({ n: n, box: box, from: now, to: q });
+    });
+    return { changes: changes, bad: bad, rows: rows.length - h - 1 };
+  }
+  function drawExcel(res) {
+    var el = document.getElementById('xlCard'); if (!el) return;
+    var lu = S.lastUpload;
+    el.innerHTML = '<h3>Excel: download and upload the inventory</h3><div class="small">Download gives one row per net and box, plus the top of the racks: <b>In box</b> is the number in that box, <b>Not in a box</b> is stock the app cannot place yet. ' +
+      'To correct many numbers: download, change the <b>In box</b> column in Excel, save, and upload the file here. You see every change before anything is saved; the total of each net moves by the same amount.</div>' +
+      '<div class="row" style="align-items:flex-end"><button class="btn" id="xlDown">Download Excel</button><label class="btn" style="cursor:pointer">Upload Excel or CSV<input id="xlUp" type="file" accept=".xlsx,.csv,text/csv" hidden></label>' +
+      (lu ? '<button class="btn danger" id="xlUndo">Undo last upload (' + esc(lu.id) + ', ' + lu.rows.length + ' changes)</button>' : '') + '</div><div class="small" id="xlMsg"></div><div id="xlPrev"></div>';
+    document.getElementById('xlDown').onclick = function () {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(xlsx([XL_COLS].concat(xlRows())));
+      a.download = 'ArmorX inventory ' + new Date().toISOString().slice(0, 10) + '.xlsx'; a.click();
+    };
+    document.getElementById('xlUp').onchange = function () {
+      var f = this.files[0], msg = document.getElementById('xlMsg'); if (!f) return;
+      if (!sheetV8()) { msg.textContent = 'Excel upload needs the Google Sheet script version ' + BOXQTY_V + '. Paste the new Code.gs and deploy it first.'; return; }
+      msg.textContent = 'Reading ' + f.name + '…';
+      var job = /\.csv$/i.test(f.name) ? f.text().then(csvRows) : f.arrayBuffer().then(unzip).then(xlsxRows);
+      job.then(function (rows) { xlPreview(xlCompare(rows), f.name); }).catch(function (e) { msg.textContent = 'Could not read the file: ' + e.message + '.'; });
+      this.value = '';
+    };
+    var ub = document.getElementById('xlUndo'); if (ub) ub.onclick = function () { xlUndo(); };
+  }
+  function xlPreview(res, name) {
+    var msg = document.getElementById('xlMsg'), pv = document.getElementById('xlPrev');
+    if (res.error) { msg.textContent = res.error; pv.innerHTML = ''; return; }
+    var nets = {}; res.changes.forEach(function (c) { nets[c.n.id] = (nets[c.n.id] || 0) + (c.to - c.from); });
+    msg.innerHTML = '<b>' + esc(name) + '</b>: ' + res.rows + ' rows read, <b>' + res.changes.length + '</b> changes' + (res.bad.length ? ', <b>' + res.bad.length + ' rows cannot be used</b> (listed below, nothing saved for them)' : '') + '.';
+    pv.innerHTML = (res.changes.length ? '<div class="tablewrap"><table><thead><tr><th>Net</th><th>Box</th><th>Now</th><th>New</th><th>Change</th><th>Net total after</th></tr></thead><tbody>' +
+      res.changes.map(function (c) { var d = c.to - c.from; return '<tr><td><span class="sw sw-' + c.n.color + '"></span>' + esc(netLabel(c.n)) + '</td><td><code>' + esc(c.box === FLOOR2 ? 'TOP' : c.box) + '</code></td><td>' + c.from + '</td><td><b>' + c.to + '</b></td><td><b>' + (d > 0 ? '+' : '') + d + '</b></td><td>' + Math.max(0, onHand(c.n.id) + nets[c.n.id]) + ' <span class="muted small">(now ' + onHand(c.n.id) + ')</span></td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="small">No numbers are different from the app. Nothing to save.</div>') +
+      (res.bad.length ? '<details class="small" open><summary>' + res.bad.length + ' rows cannot be used</summary><div class="tablewrap"><table><thead><tr><th>Line</th><th>Row</th><th>Why</th></tr></thead><tbody>' + res.bad.map(function (b) { return '<tr><td>' + b[0] + '</td><td>' + esc(b[1]) + '</td><td>' + esc(b[2]) + '</td></tr>'; }).join('') + '</tbody></table></div></details>' : '') +
+      (res.changes.length ? '<div class="row" style="justify-content:flex-end;align-items:flex-end">' + reasonSelect('xlWhy') + '<button class="btn" id="xlNo">Cancel</button><button class="btn primary" id="xlOk">Save ' + res.changes.length + ' changes</button></div>' : '');
+    var no = document.getElementById('xlNo'); if (no) no.onclick = function () { pv.innerHTML = ''; msg.textContent = 'Cancelled. Nothing was changed.'; };
+    var ok = document.getElementById('xlOk'); if (ok) ok.onclick = function () {
+      var why = readReason('xlWhy'); if (why === null) { msg.textContent = 'Pick a reason for the changes first.'; return; }
+      var id = 'UP-' + new Date().toISOString().slice(5, 16).replace(/[-:T]/g, ''), done = [];
+      res.changes.forEach(function (c) { setBoxQty(c.box, c.n.id, c.to, why, id); done.push({ loc: c.box, net: c.n.id, from: c.from, to: c.to }); });
+      S.lastUpload = { id: id, at: now(), who: sess.emp, rows: done }; S.undo = null; save();
+      toast(done.length + ' changes saved from ' + name + '.'); route();
+    };
+  }
+  function xlUndo() { // put back the numbers from before the last upload, where nobody changed them since
+    var lu = S.lastUpload, msg = document.getElementById('xlMsg'); if (!lu) return;
+    var back = 0, skip = [];
+    lu.rows.forEach(function (x) { if (counted(x.loc, x.net) === x.to) { setBoxQty(x.loc, x.net, x.from, 'Undo Excel upload ' + lu.id, lu.id + '-undo'); back++; } else skip.push(netLabel(BY_ID[x.net]) + ' ' + (x.loc === FLOOR2 ? 'TOP' : x.loc)); });
+    S.lastUpload = null; save(); route();
+    toast(back + ' changes undone.' + (skip.length ? ' ' + skip.length + ' kept, because they changed since: ' + skip.slice(0, 5).join(', ') + (skip.length > 5 ? '…' : '') + '.' : ''));
   }
 
   // ---------- pick list: paste today's self-ship orders, get them in walking order ----------
@@ -1039,20 +1232,36 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
           var code = s + '-C' + c2 + '-R' + r, bx = BOXES[code];
           if (!bx) { out += '<div class="bx free" data-b="' + code + '">·</div>'; continue; }
           var list = netsAt(code), n = list[0], st = isEmpty(code) ? 'out' : (bx.kind === 'bin' ? (list.some(function (x) { return status(x) === 'out'; }) ? 'out' : list.some(function (x) { return status(x) === 'low'; }) ? 'low' : 'ok') : status(n));
-          out += '<div class="bx ' + st + (bx.role === 'backup' ? ' bkp' : '') + '" data-b="' + code + '" data-s="' + n.size + '" title="' + code + '"><span>' + n.size + '</span><span>' + (bx.kind === 'bin' ? '3 bins' : n.color) + (bx.role === 'backup' ? ' ·B' : '') + '</span></div>';
+          out += '<div class="bx ' + st + (bx.role === 'backup' ? ' bkp' : '') + '" data-b="' + code + '" data-s="' + n.size + '" title="' + code + '"><span>' + n.size + '</span><span>' + (bx.kind === 'bin' ? '3 bins' : n.color) + (bx.role === 'backup' ? ' ·B' : '') + '</span>' + (boxKnown(code) ? '<span class="q">' + boxTotal(code) + '</span>' : '') + '</div>';
         }
       }
       out += '</div></div>';
     });
     document.getElementById('sides').innerHTML = out;
-    app.querySelectorAll('.bx').forEach(function (b) { b.onclick = function () {
-      var code = b.dataset.b, bx = BOXES[code], el = document.getElementById('boxInfo');
+    function info(code) {
+      var bx = BOXES[code], el = document.getElementById('boxInfo');
       if (!bx) { el.innerHTML = '<b>' + esc(code) + '</b> is free.'; return; }
-      var r = boxRec(code), list = netsAt(code);
-      el.innerHTML = '<b>' + esc(code) + '</b> · ' + (bx.role === 'pick' ? 'PICK' : 'BACKUP') + (bx.kind === 'bin' ? ' · 3 bins' : '') + ' · ' +
-        list.map(function (n) { return esc(netLabel(n)) + ' <b>' + onHand(n.id) + '</b> in total' + (bx.mix ? ' (' + bx.mix[n.id] + ' in this box)' : ''); }).join(' · ') +
-        ' · ' + (r ? (r.state === 'empty' ? '<b>empty</b>' : 'made ' + esc(fmtD(r.made))) : 'not scanned yet') + ' · home: <code>' + esc(list[0].home) + '</code>';
-    }; });
+      var r = boxRec(code), list = netsAt(code), edit = can('Manager') && sheetV8();
+      el.innerHTML = '<b>' + esc(code) + '</b> · ' + (bx.role === 'pick' ? 'PICK' : 'BACKUP') + (bx.kind === 'bin' ? ' · 3 bins' : '') + ' · ' + (r ? (r.state === 'empty' ? '<b>marked empty</b>' : (r.made ? 'made ' + esc(fmtD(r.made)) : 'has nets')) : 'not scanned yet') +
+        '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In this box</th><th>On top of racks</th><th>Not in a box</th><th>Total</th></tr></thead><tbody>' +
+        list.map(function (n) { var nb = onHand(n.id) - inBoxes(n.id) - counted(FLOOR2, n.id);
+          return '<tr><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><b>' + (S.shelf[countKey(code, n.id)] ? counted(code, n.id) : '—') + '</b> <span class="muted small">room ' + (bx.mix ? bx.mix[n.id] : bx.cap) + '</span></td><td>' + counted(FLOOR2, n.id) + '</td><td>' + (nb > 0 ? nb : 0) + '</td><td><b>' + onHand(n.id) + '</b></td></tr>'; }).join('') + '</tbody></table></div>' +
+        (edit ? '<div class="row" style="align-items:flex-end"><label class="f">Change<select id="bqWhere">' +
+          list.map(function (n) { return '<option value="' + code + '|' + n.id + '">' + esc(code + ' · ' + netLabel(n)) + '</option><option value="' + FLOOR2 + '|' + n.id + '">' + esc('Top of racks · ' + netLabel(n)) + '</option>'; }).join('') + '</select></label>' +
+          '<label class="f">New number<input id="bqQty" type="number" min="0" inputmode="numeric" style="width:6em"></label>' + reasonSelect('bqWhy') + '<button class="btn primary" id="bqSave">Save</button></div><div class="small" id="bqMsg"></div>'
+          : (can('Manager') ? '<div class="small muted">Changing a box number needs the Google Sheet script version ' + BOXQTY_V + '.</div>' : ''));
+      var sv = document.getElementById('bqSave'); if (!sv) return;
+      sv.onclick = function () {
+        var w = document.getElementById('bqWhere').value.split('|'), q = parseInt(document.getElementById('bqQty').value, 10), msg = document.getElementById('bqMsg'), why = readReason('bqWhy');
+        if (!(q >= 0) || q > 500) { msg.textContent = 'Type the number of nets that are really there (0 or more).'; return; }
+        if (q === counted(w[0], w[1]) && S.shelf[countKey(w[0], w[1])]) { msg.textContent = 'That is already the number.'; return; }
+        if (why === null) { msg.textContent = 'Pick a reason first.'; return; }
+        var x = setBoxQty(w[0], w[1], q, why); save();
+        toast((w[0] === FLOOR2 ? 'Top of racks' : w[0]) + ' · ' + netLabel(x.n) + ': ' + x.was + ' → ' + q + '. Total now ' + onHand(w[1]) + '.');
+        viewRacks(); setTimeout(function () { var b = app.querySelector('[data-b="' + code + '"]'); if (b) b.click(); }, 0);
+      };
+    }
+    app.querySelectorAll('.bx').forEach(function (b) { b.onclick = function () { info(b.dataset.b); }; });
     document.getElementById('rq').oninput = function () { var v = this.value.trim().toLowerCase(); app.querySelectorAll('.bx').forEach(function (b) { b.classList.toggle('hl', !!v && (b.dataset.s || '').indexOf(v) === 0); }); };
   }
 
@@ -1114,7 +1323,11 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
         'A snapshot of all of it is saved first (Snapshots tab of the Google Sheet). The scan log and production batches are kept, with a "Reset" line, so history is never lost. ' +
         'Scans made before the reset on a phone that was offline are not saved, and older scans cannot be undone.</div>' +
         '<div class="row" style="align-items:flex-end"><label class="f">Why (optional)<input id="rsWhy" maxlength="60" placeholder="e.g. testing, opening count"></label><label class="f">Type RESET to confirm<input id="rsTxt" autocomplete="off" autocapitalize="characters"></label>' +
-        '<button class="btn danger" id="rsGo">Reset to zero</button></div><div class="small" id="rsMsg"></div></div>' : ''));
+        '<button class="btn danger" id="rsGo">Reset to zero</button></div><div class="small" id="rsMsg"></div></div>' : '') +
+      (can('Admin') && sheetOn() ? '<div class="card" id="snapCard"><h3>Snapshots and restore <span class="small muted">(admin)</span></h3><div class="small">The Google Sheet saves a copy of the inventory (stock, box numbers, box records, waiting counts) every evening, kept for ' + 30 + ' days, and before every reset or restore. ' +
+        'Restore puts the inventory back to a copy. A copy of how it is now is saved first, and the scan log is kept.</div>' +
+        ((S.snaps || []).length ? '<div class="row" style="align-items:flex-end"><label class="f">Copy<select id="snSel">' + S.snaps.map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.id) + ' · ' + esc(fmtT(x.t)) + ' · ' + x.rows + ' rows</option>'; }).join('') + '</select></label><button class="btn" id="snPrev">Preview</button></div>'
+          : '<div class="small muted">No copies yet' + ((S.sheetV || 0) < BOXQTY_V ? ' (needs the Google Sheet script version ' + BOXQTY_V + ')' : '') + '.</div>') + '<div class="small" id="snMsg"></div><div id="snOut"></div></div>' : ''));
     document.getElementById('gsForm').onsubmit = function (e) {
       e.preventDefault();
       var u = document.getElementById('gsUrl').value.trim();
@@ -1123,6 +1336,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       S.settings.sheetUrl = u; save(); document.getElementById('gsMsg').textContent = 'Saved. Checking the sheet…';
       pull().then(function () { var m = document.getElementById('gsMsg'); if (m) m.textContent = syncText(); });
     };
+    var sp = document.getElementById('snPrev'); if (sp) sp.onclick = function () { snapPreview(document.getElementById('snSel').value); };
     var rs = document.getElementById('rsGo'); if (rs) rs.onclick = function () { resetAll(document.getElementById('rsTxt').value, document.getElementById('rsWhy').value.trim(), document.getElementById('rsMsg')); };
     document.getElementById('bk').onclick = function () { var a = document.createElement('a'); var c = clone(S); delete c.auth; a.href = URL.createObjectURL(new Blob([JSON.stringify(c, null, 1)], { type: 'application/json' })); a.download = 'armorx-inventory-backup.json'; a.click(); };
   }
@@ -1134,12 +1348,32 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (String(typed).trim().toUpperCase() !== 'RESET') { msg.textContent = 'Type RESET in the box to confirm.'; return; }
     if (sheetOn() && (S.sheetV || 0) < RESET_V) { msg.textContent = 'The Google Sheet script is older than version ' + RESET_V + '. Paste the new google-sheet/Code.gs and deploy a new version first.'; return; }
     var total = NETS.reduce(function (a, n) { return a + onHand(n.id); }, 0);
-    S.stock = {}; S.boxes = {}; S.counts = {}; S.shelf = {}; S.undo = null;
+    S.stock = {}; S.boxes = {}; S.counts = {}; S.shelf = {}; S.undo = null; S.lastUpload = null;
     var ev = addLog({ type: 'RESET', who: sess.emp || S.auth.id, reason: why, note: 'Inventory reset to zero (was ' + total + ' nets)' + (why ? ' · reason: ' + why : '') });
     S.resetAt = ev.t; save();
     msg.textContent = 'Done. Every net is 0 now (it was ' + total + ' nets in total). A snapshot is saved in the Snapshots tab.';
     document.getElementById('rsTxt').value = '';
     toast('Inventory reset to zero.');
+  }
+
+  // Restore (admin): preview what a copy holds, then put the inventory back to it. Code.gs saves a copy of now first.
+  function snapPreview(id) {
+    var msg = document.getElementById('snMsg'), out = document.getElementById('snOut'); msg.textContent = 'Loading ' + id + '…'; out.innerHTML = '';
+    fetch(sheetUrl() + '?t=' + encodeURIComponent(S.auth.t) + '&snap=' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { msg.textContent = d.error || 'Could not load the copy.'; return; }
+      var diff = NETS.filter(function (n) { return (d.stock[n.id] || 0) !== onHand(n.id); });
+      var tNow = NETS.reduce(function (a, n) { return a + onHand(n.id); }, 0), tThen = NETS.reduce(function (a, n) { return a + (d.stock[n.id] || 0); }, 0);
+      msg.innerHTML = '<b>' + esc(id) + '</b>: ' + tThen + ' nets in total (now ' + tNow + '), ' + diff.length + ' nets with a different total, ' + d.shelf.length + ' box numbers, ' + d.boxes + ' box records, ' + d.counts + ' waiting counts.';
+      out.innerHTML = (diff.length ? '<div class="tablewrap"><table><thead><tr><th>Net</th><th>Now</th><th>In the copy</th></tr></thead><tbody>' + diff.slice(0, 80).map(function (n) { return '<tr><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td>' + onHand(n.id) + '</td><td><b>' + (d.stock[n.id] || 0) + '</b></td></tr>'; }).join('') + '</tbody></table></div>' + (diff.length > 80 ? '<div class="small muted">and ' + (diff.length - 80) + ' more</div>' : '') : '') +
+        '<div class="row" style="align-items:flex-end"><label class="f">Type RESTORE to confirm<input id="snTxt" autocomplete="off" autocapitalize="characters"></label><button class="btn danger" id="snGo">Restore this copy</button></div>';
+      document.getElementById('snGo').onclick = function () {
+        if (document.getElementById('snTxt').value.trim().toUpperCase() !== 'RESTORE') { msg.textContent = 'Type RESTORE in the box to confirm.'; return; }
+        S.stock = clone(d.stock); S.shelf = {}; d.shelf.forEach(function (c) { S.shelf[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: c.qty }; }); S.undo = null; S.lastUpload = null;
+        var ev = addLog({ type: 'RESTORE', who: sess.emp || S.auth.id, snap: id, note: 'Inventory restored from ' + id + ' (was ' + tNow + ' nets, now ' + tThen + ')' });
+        S.resetAt = ev.t; save(); out.innerHTML = ''; msg.textContent = 'Restored from ' + id + '. Box records and counts come back with the next sync.';
+        toast('Inventory restored from ' + id + '.');
+      };
+    }).catch(function () { msg.textContent = 'Could not reach the Google Sheet.'; });
   }
 
   // ---------- people (admin): who can sign in, their level, PIN ----------
@@ -1323,6 +1557,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (d.boxes && typeof d.boxes === 'object') { S.boxes = d.boxes; S.layout = window.LAYOUT_VERSION; }
     if (Array.isArray(d.shelf)) { S.shelf = {}; d.shelf.forEach(function (c) { if (c.box && c.net) S.shelf[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
     S.resetAt = d.resetAt || S.resetAt || '';
+    if (Array.isArray(d.snaps)) S.snaps = d.snaps;
     if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
     S.sheetV = Number(d.v) || 0;
     if (d.me && S.auth && d.me.id === S.auth.id) { S.auth.name = d.me.name; S.auth.level = d.me.level; } // a level change by the admin shows at once

@@ -174,6 +174,50 @@ const STEPS = [
   await page.evaluate(() => { location.hash = 'dashboard'; }); await page.waitForTimeout(150);
   expect('dashboard shows the put aways so far', (await page.textContent('#app')).includes('Put away so far'));
 
+  // number per box: the rack map shows it, a manager changes one box with a reason, the total moves by the difference
+  await page.evaluate(() => { location.hash = 'racks'; }); await page.waitForSelector('[data-b="' + PA_BOX + '"]');
+  expect('rack map tile shows the number in the box', (await page.textContent('[data-b="' + PA_BOX + '"] .q')) === '5');
+  await page.click('[data-b="' + PA_BOX + '"]');
+  expect('box info shows in this box, on top, total', (await page.textContent('#boxInfo')).includes('In this box'));
+  let s1 = (await st()).stock[PA];
+  await page.fill('#bqQty', '7'); await page.click('#bqSave');
+  expect('box change needs a reason', (await page.textContent('#bqMsg')).includes('reason'));
+  await page.selectOption('#bqWhy', 'Found extra nets'); await page.click('#bqSave');
+  S = await st();
+  expect('box change 5 → 7: box 7, total +2, logged with reason', S.shelf[PA_BOX + '|' + PA].qty === 7 && S.stock[PA] === s1 + 2 && S.log[0].type === 'BOXQTY' && S.log[0].reason === 'Found extra nets');
+  // a pick from that box takes it off the box too
+  await page.evaluate(() => { location.hash = 'scan'; }); await page.waitForSelector('#scanIn');
+  await scan('CMD-OUT'); await scan(PA_BOX); await scan('2');
+  S = await st();
+  expect('a pick from a box takes 2 off that box', S.shelf[PA_BOX + '|' + PA].qty === 5 && S.stock[PA] === s1);
+  await scan('CMD-CANCEL');
+
+  // Excel: download, upload with preview, refused rows, save, undo the upload
+  await page.evaluate(() => { location.hash = 'stock'; }); await page.waitForSelector('#xlDown');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#xlDown')]);
+  const xfile = await dl.path();
+  expect('Excel download is an .xlsx file', /\.xlsx$/.test(dl.suggestedFilename()) && require('fs').readFileSync(xfile).slice(0, 2).toString() === 'PK');
+  await page.setInputFiles('#xlUp', xfile);
+  await page.waitForFunction(() => /rows read/.test(document.getElementById('xlMsg').textContent));
+  expect('uploading the same file back: no changes', (await page.textContent('#xlMsg')).includes(' 0 changes') && (await page.textContent('#xlPrev')).includes('Nothing to save'));
+  const csv = 'Net ID,Size,Color,Box,Box type,In box\n' + PA + ',210x90,Black,' + PA_BOX + ',pick,9\n' + PA + ',210x90,Black,TOP,top,3\nDN-999,x,x,AL-C1-R1,pick,3\n' + PA + ',210x90,Black,AL-C1-R1,pick,4\n' + PA + ',210x90,Black,' + PA_BOX + ',pick,lots\n';
+  s1 = (await st()).stock[PA];
+  await page.setInputFiles('#xlUp', { name: 'counts.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await page.waitForFunction(() => /rows read/.test(document.getElementById('xlMsg').textContent));
+  const pvTxt = await page.textContent('#xlPrev');
+  expect('upload preview: 2 changes, unknown net, wrong box and bad number refused', (await page.textContent('#xlMsg')).includes('2 changes') && pvTxt.includes('unknown Net ID') && pvTxt.includes('not a home') && pvTxt.includes('not a whole number'));
+  expect('nothing saved before you press Save', (await st()).shelf[PA_BOX + '|' + PA].qty === 5);
+  await page.selectOption('#xlWhy', 'Opening count'); await page.click('#xlOk');
+  S = await st();
+  expect('upload saved: box 9, top 3, total +7, each logged as Excel upload', S.shelf[PA_BOX + '|' + PA].qty === 9 && S.shelf['TOP|' + PA].qty === 3 && S.stock[PA] === s1 + 7 && S.log.filter((e) => e.type === 'BOXQTY' && e.upload).length === 2);
+  await page.waitForSelector('#xlUndo'); await page.click('#xlUndo');
+  S = await st();
+  expect('undo the upload: numbers and total back', S.shelf[PA_BOX + '|' + PA].qty === 5 && S.shelf['TOP|' + PA].qty === 0 && S.stock[PA] === s1);
+  // a real Excel file: compressed, shared strings, the first sheet stored as sheet2.xml
+  await page.setInputFiles('#xlUp', path.join(__dirname, 'fixtures', 'excel-deflate.xlsx'));
+  await page.waitForFunction(() => /rows read|Could not/.test(document.getElementById('xlMsg').textContent));
+  expect('a compressed Excel file from Excel is read (2 changes: box 11, top 2)', (await page.textContent('#xlMsg')).includes('2 changes') && (await page.textContent('#xlPrev')).includes('11'));
+
   // reset to zero: owner only, typed confirmation, everything back to 0
   await page.evaluate(() => { location.hash = 'settings'; }); await page.waitForTimeout(150);
   await page.waitForSelector('#rsGo');
