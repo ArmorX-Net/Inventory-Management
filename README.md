@@ -11,12 +11,12 @@ A simple inventory and production tracker for ArmorX doornets. It runs in any br
 
 ## Phones (each worker scans with their own phone)
 
-1. The manager sends each worker the **setup link** once (on WhatsApp): `<app link>#setup=<access key>`. The access key is in the Apps Script code, line `ACCESS_KEY`. It is never stored in this repository.
-2. The worker opens it in Chrome (Android) or Safari (iPhone), then **Add to Home screen**.
-3. They pick their name under **I am**. The phone remembers it.
+1. The worker opens the app link in Chrome (Android) or Safari (iPhone), then **Add to Home screen**.
+2. They sign in with their **employee number** (type it or scan their badge) and their own **4-digit PIN**. The phone stays signed in for 30 days.
+3. Their name goes on every scan. Sharing a phone? The next person scans their badge and types their PIN.
 4. They tap **Scan with camera** and point at a label. Each scan is saved to the Google Sheet. If the network drops, scans wait on the phone and are sent when it is back.
 
-Workers are listed in the sheet's **Workers** tab (Badge, Name, Main step). Sales per day comes from the sheet's **Nets** tab.
+Workers are listed in the sheet's **Workers** tab (Badge, Name, Main step, Level, Active, PIN). The admin manages people, levels and PINs on the **People** page (see `google-sheet/SETUP.md`, Version 5). Sales per day comes from the sheet's **Nets** tab.
 
 ## Rack layout (v7, final for the 2-week trial)
 
@@ -27,7 +27,7 @@ See [LAYOUT.md](LAYOUT.md). In short: doornets on racks A–C, sizes in number o
 | Step | Who | Scans |
 |---|---|---|
 | Create batch | Manager | Batches → pick size, color, qty → **Create & print label** (100 × 50 mm). **Box tags** prints one copy per 20 nets, with the production date. |
-| Cutting … Packing | Each worker | badge (or "I am" on the phone) → batch label |
+| Cutting … Packing | Each worker | signed in on their phone → batch label |
 | Rack-in | Rack person | batch label → `TOP` (extra stock on top of the racks) or an **empty** home box. A box that still has older nets is refused (first made, first shipped). |
 | Ship an order | Picker | `CMD-OUT` → **pick box** (3-bin box: tap the color) → quantity. Backup boxes are refused. |
 | FBA shipment | Picker | `CMD-FBA` → box label → quantity |

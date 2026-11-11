@@ -6,7 +6,8 @@ Read this before changing the app. These are the owner's standing rules. If a ch
 * Static web app on GitHub Pages (`index.html`, `app.js`, `cam.js`, `styles.css`, `data/doornets.js`). No build step, no npm packages in the app.
 * Shared data: Google Sheet through the Apps Script web app in `google-sheet/Code.gs`. After changing `Code.gs`, the owner must paste it into Apps Script and deploy a new version.
 * Workers scan with their own phones (camera) or the USB scanner (Code 128). Everything must work on a phone screen.
-* Business account is the office Google account. This repo is public: never commit the access key, sales numbers, or customer data.
+* Business account is the office Google account. This repo is public: never commit a PIN, password, key, staff names, sales numbers, or customer data.
+* Sign-in (owner, 11 Nov 2026): everyone signs in with employee number (badge, e.g. EMP-78) + their own 4-digit PIN; no name drop-down before sign-in (it would show staff names to anyone with the link). `Code.gs` checks the signed token on every read and write; PINs are only stored hashed in the Workers tab. Levels: Worker (floor work: scan, pick, refill, box count, own undo), Manager (+ dashboard, stock, COUNT/apply counts, batches, labels, scan log), Admin (+ People, PINs, settings). Roles never restrict floor work: staff rotate. A phone stays signed in 30 days. Any new server action must check the level in `Code.gs`, not only hide a button.
 
 ## Warehouse rules the code enforces
 * Location code: rack letter + side (L/R), column C1-C6, row R1-R5 (R1 = floor). Example `AL-C5-R3`. Extra stock sits on top of the racks (above R5) with no fixed places: location `TOP` (old `2F` labels still scan as TOP).
