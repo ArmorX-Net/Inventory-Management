@@ -29,13 +29,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       { id: 'EMP-04', name: 'Worker 4', role: 'Final finishing' },
       { id: 'EMP-05', name: 'Worker 5', role: 'Packing' },
       { id: 'EMP-06', name: 'Worker 6', role: 'Racks & dispatch' }
-    ], settings: { batchSize: '50x25' }, boxes: {}, demo: false };
+    ], settings: { batchSize: '50x25' }, boxes: {}, counts: {}, demo: false };
   }
   var S;
   function load() {
     try { var raw = localStorage.getItem(KEY); S = raw ? JSON.parse(raw) : null; } catch (e) { S = null; }
     if (!S) { S = blank(); seedDemo(); }
     if (!S.boxes || S.layout !== window.LAYOUT_VERSION) { S.boxes = {}; S.layout = window.LAYOUT_VERSION; }
+    S.counts = S.counts || {}; // box count (opening count): 'BOX|NET' -> { box, net, qty, at, by }
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
   function onHand(id) { return S.stock[id] || 0; }
@@ -47,13 +48,16 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function wname(id) { var w = worker(id); return w ? w.name : (id || '—'); }
   function status(n) { var q = onHand(n.id); return q <= 0 ? 'out' : (q <= n.refillAt ? 'low' : 'ok'); }
   var noSync = false;
+  function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function isUndone(e) { return !!(e && (e.undone || / · UNDONE/.test(e.note || ''))); }
   function addLog(e) {
-    e.t = e.t || now(); S.log.unshift(e); if (S.log.length > 5000) S.log.length = 5000;
+    e.id = e.id || newId(); e.t = e.t || now(); S.log.unshift(e); if (S.log.length > 5000) S.log.length = 5000;
     queue(Object.assign({}, e));
+    return e;
   }
   function queue(ev) {
     if (noSync || !sheetOn()) return;
-    ev.id = ev.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+    ev.id = ev.id || newId();
     ev.t = ev.t || now();
     if (ev.net && BY_ID[ev.net]) ev.netName = netLabel(BY_ID[ev.net]);
     S.queue = S.queue || []; S.queue.push(ev); save(); setTimeout(flush, 50);
@@ -178,7 +182,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     barcode(el.querySelector('.bc'), w.id, null, '10mm');
     return el;
   }
-  var COMMANDS = [['CMD-OUT', 'OUT · order pick'], ['CMD-FBA', 'OUT · FBA shipment'], ['CMD-RETURN', 'RETURN · back to stock'], ['CMD-DAMAGED', 'RETURN · damaged'], ['CMD-COUNT', 'COUNT · correct total'], ['CMD-SWAP', 'SWAP · backup down'], ['CMD-REFILL', 'REFILL · from 2F'], ['CMD-EMPTY', 'EMPTY · box ran out'], ['CMD-CANCEL', 'CANCEL · clear'], ['QTY-1', 'Qty 1'], ['QTY-5', 'Qty 5'], ['QTY-10', 'Qty 10'], ['QTY-20', 'Qty 20'], ['QTY-25', 'Qty 25']];
+  var COMMANDS = [['CMD-OUT', 'OUT · order pick'], ['CMD-FBA', 'OUT · FBA shipment'], ['CMD-RETURN', 'RETURN · back to stock'], ['CMD-DAMAGED', 'RETURN · damaged'], ['CMD-COUNT', 'COUNT · correct total'], ['CMD-SWAP', 'SWAP · backup down'], ['CMD-REFILL', 'REFILL · from 2F'], ['CMD-EMPTY', 'EMPTY · box ran out'], ['CMD-CANCEL', 'CANCEL · clear'], ['CMD-UNDO', 'UNDO · my last scan'], ['CMD-BOXCOUNT', 'BOX COUNT · count shelves'], ['QTY-1', 'Qty 1'], ['QTY-5', 'Qty 5'], ['QTY-10', 'Qty 10'], ['QTY-20', 'Qty 20'], ['QTY-25', 'Qty 25']];
   function cmdLabel(c) {
     var el = document.createElement('div'); el.className = 'lbl lbl-cmd';
     el.innerHTML = '<div class="mono" style="font-size:6.5pt">ARMORX · COMMAND</div><div class="nm">' + esc(c[1]) + '</div><svg class="bc"></svg><div class="mono" style="font-size:6.5pt;text-align:center">' + esc(c[0]) + '</div>';
@@ -206,7 +210,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var open = Object.values(S.batches).filter(function (b) { return b.stage < 6; });
     var inProd = open.reduce(function (a, b) { return a + b.good; }, 0);
     var outToday = 0, inToday = 0;
-    S.log.forEach(function (e) { if (!isToday(e.t)) return; if (e.type === 'OUT' || e.type === 'FBA') outToday += e.qty; if (e.type === 'IN' || e.type === 'RETURN') inToday += e.qty; });
+    S.log.forEach(function (e) { if (!isToday(e.t) || isUndone(e)) return; if (e.type === 'OUT' || e.type === 'FBA') outToday += e.qty; if (e.type === 'IN' || e.type === 'RETURN') inToday += e.qty; });
     var cols = STAGES.map(function (s, i) {
       var items = Object.values(S.batches).filter(function (b) { return i < 6 ? b.stage === i : (b.stage === 6 && isToday(b.history[b.history.length - 1].t)); });
       return '<div class="col"><h4><span>' + (i < 6 ? esc(s) : 'Racked today') + '</span><span>' + items.length + '</span></h4>' +
@@ -220,7 +224,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       return '<tr><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><code>' + esc(n.pick) + '</code></td><td>' + onHand(n.id) + '</td><td>' + (n.perDay || '—') + '</td><td><span class="pill ' + (st === 'out' ? 'p-bad">Out' : 'p-warn">Low') + '</span></td><td><button class="btn" data-make="' + n.id + '" data-qty="' + need + '">Make ' + need + '</button></td></tr>';
     }).join('');
     var perWorker = {};
-    S.log.forEach(function (e) { if (!isToday(e.t) || e.type !== 'STAGE') return; perWorker[e.who] = (perWorker[e.who] || 0) + e.qty; });
+    S.log.forEach(function (e) { if (!isToday(e.t) || e.type !== 'STAGE' || isUndone(e)) return; perWorker[e.who] = (perWorker[e.who] || 0) + e.qty; });
     var wRows = S.workers.map(function (w) { return '<tr><td>' + esc(w.name) + '</td><td class="muted">' + esc(w.role) + '</td><td>' + (perWorker[w.id] || 0) + '</td></tr>'; }).join('');
     h('<div class="row" style="justify-content:space-between;align-items:center"><h2>Today at a glance</h2><div class="row"><a class="btn primary" href="#batches">New batch label</a><a class="btn dark" href="#scan">Open scan station</a></div></div>' +
       '<div class="grid">' +
@@ -236,8 +240,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function kpi(n, l, cls) { return '<div class="card kpi ' + cls + '"><span class="n">' + n + '</span><span class="l">' + esc(l) + '</span></div>'; }
   function logRow(e) {
     var n = BY_ID[e.net];
-    var typ = { STAGE: 'p-mute', IN: 'p-ok', OUT: 'p-warn', FBA: 'p-warn', RETURN: 'p-ok', DAMAGED: 'p-bad', COUNT: 'p-mute', BATCH: 'p-mute' }[e.type] || 'p-mute';
-    return '<tr><td class="muted">' + fmtT(e.t) + '</td><td><span class="pill ' + typ + '">' + esc(e.type) + '</span></td><td>' + esc(wname(e.who)) + '</td><td>' + (e.wo ? '<code>' + esc(e.wo) + '</code> ' : '') + esc(n ? netLabel(n) : (e.net || '')) + '</td><td>' + (e.qty != null ? e.qty : '') + '</td><td>' + (e.loc ? '<code>' + esc(e.loc) + '</code>' : '') + '</td><td class="muted">' + esc(e.note || '') + '</td></tr>';
+    var typ = { STAGE: 'p-mute', IN: 'p-ok', OUT: 'p-warn', FBA: 'p-warn', RETURN: 'p-ok', DAMAGED: 'p-bad', COUNT: 'p-mute', BATCH: 'p-mute', UNDO: 'p-bad' }[e.type] || 'p-mute';
+    return '<tr' + (isUndone(e) ? ' class="undone"' : '') + '><td class="muted">' + fmtT(e.t) + '</td><td><span class="pill ' + typ + '">' + esc(e.type) + '</span></td><td>' + esc(wname(e.who)) + '</td><td>' + (e.wo ? '<code>' + esc(e.wo) + '</code> ' : '') + esc(n ? netLabel(n) : (e.net || '')) + '</td><td>' + (e.qty != null ? e.qty : '') + '</td><td>' + (e.loc ? '<code>' + esc(e.loc) + '</code>' : '') + '</td><td class="muted">' + esc(e.note || '') + '</td></tr>';
   }
 
   function showBatch(wo) {
@@ -312,7 +316,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="prompt" id="prompt"></div>' +
       '<input id="scanIn" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Scan here…" aria-label="Scan input">' +
       '<div class="feedback" id="fb" role="status">Ready.</div>' +
-      '<div id="adjust"></div><div id="qbar"></div>' +
+      '<div id="adjust"></div><div id="qbar"></div><div id="undoBar"></div>' +
       '<div class="small" style="color:#cfd6db">' + (TOUCH ? 'Tap <b>Scan with camera</b> and point at the label. You can also type a code and press Enter.' : 'Keep this box selected. The scanner types the code and presses Enter. You can also type a code and press Enter.') + '</div></div>' +
       '<details class="card"' + (TOUCH ? '' : ' open') + '><summary><h3 style="display:inline">Test without a scanner</h3></summary><div class="small muted">Tap a code to send it as if it were scanned.</div>' +
       '<div class="small"><b>1 · Worker badge</b></div><div class="sim" id="simW"></div>' +
@@ -326,7 +330,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<li>After Pack, scan the batch, then <b>2F</b> (second floor) or an <b>empty</b> box on the rack. Stock goes up.</li>' +
       '<li>To pick: scan <b>OUT</b>, then the <b>pick box</b> (3-bin box: tap the color), then the quantity.</li>' +
       '<li>Pick box empty: scan <b>SWAP</b>, then the backup box you bring down. No backup: scan <b>EMPTY</b>, then the box.</li>' +
-      '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest second-floor batch, scan <b>REFILL</b> and the box.</li></ol></details></div>');
+      '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest second-floor batch, scan <b>REFILL</b> and the box.</li>' +
+      '<li>Made a mistake? Tap <b>Undo my last scan</b> (or scan <b>UNDO</b>) within ' + UNDO_MIN + ' minutes and pick why.</li>' +
+      '<li>Opening count or day 14 count: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>2F</b> for the second floor. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
@@ -335,12 +341,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     document.getElementById('acts').onclick = function (e) { var b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); var a = b.dataset.act;
       if (a === 'CANCEL' || a === sess.mode) handle('CMD-CANCEL'); else handle('CMD-' + a); if (!TOUCH) refocus(); };
     document.getElementById('qbar').onclick = function (e) { var b = e.target.closest('[data-q]'); if (!b) return; e.stopPropagation(); handle(b.dataset.q); if (!TOUCH) refocus(); };
+    document.getElementById('undoBar').onclick = function (e) { var b = e.target.closest('[data-undo]'); if (!b) return; e.stopPropagation(); handle('CMD-UNDO'); if (!TOUCH) refocus(); };
     function sim(id, codes) { var el = document.getElementById(id); el.innerHTML = codes.map(function (c) { return '<button type="button" data-c="' + esc(c[0]) + '" title="' + esc(c[1] || '') + '">' + esc(c[0]) + (c[1] ? ' · ' + esc(c[1]) : '') + '</button>'; }).join(''); }
     sim('simW', S.workers.map(function (w) { return [w.id, w.name.replace(' (sample)', '')]; }));
     sim('simB', Object.values(S.batches).filter(function (b) { return b.stage < 6; }).slice(-6).map(function (b) { return [b.id, SHORT[b.stage + 1] + ' next']; }));
     var picks = ['DN-210x100-BK', 'DN-210x100-GR', 'DN-200x100-BK', 'DN-250x150-GR', 'DN-210x95-BR', 'DN-205x90-GR', 'DN-210x100-BR'].map(function (id) { return [BY_ID[id].pick, BY_ID[id].size + ' ' + BY_ID[id].color]; }).concat([[FLOOR2, 'second floor']]);
     sim('simL', picks);
-    sim('simC', [['CMD-OUT'], ['CMD-FBA'], ['CMD-SWAP'], ['CMD-REFILL'], ['CMD-EMPTY'], ['CMD-RETURN'], ['CMD-COUNT'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]);
+    sim('simC', [['CMD-OUT'], ['CMD-FBA'], ['CMD-SWAP'], ['CMD-REFILL'], ['CMD-EMPTY'], ['CMD-RETURN'], ['CMD-COUNT'], ['CMD-BOXCOUNT'], ['CMD-UNDO'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]);
     app.querySelectorAll('.sim button').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); handle(b.dataset.c); if (!TOUCH) refocus(); }; });
     paint(); if (!TOUCH) inp.focus();
   }
@@ -355,6 +362,10 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (sess.emp) {
       if (sess.await === 'loc' && sess.wo) p = 'Now scan the box label for ' + esc(netLabel(BY_ID[S.batches[sess.wo].net])) + ' <span class="small">(home ' + esc(BY_ID[S.batches[sess.wo].net].home) + ')</span>';
       else if (sess.await === 'color') p = 'Which color? Tap Black, Brown or Grey below';
+      else if (sess.await === 'reason') p = 'Why is the count different? Tap a reason below';
+      else if (sess.await === 'ureason') p = 'Why are you undoing it? Tap a reason below';
+      else if (sess.await === 'bcnet') p = 'Second floor: pick the size, then tap the color';
+      else if (sess.await === 'bcqty' && sess.bc) p = 'How many ' + esc(netLabel(sess.net)) + ' in ' + esc(sess.bc.loc === FLOOR2 ? 'the second floor' : sess.bc.loc) + '? <span class="small">' + (sess.bc.nets.length > 1 ? 'Count only the ' + esc(sess.net.color) + ' bin · ' : '') + 'type the number (0 if none)</span>';
       else if (sess.await === 'qty') p = esc({ OUT: 'How many going out?', FBA: 'How many for FBA?', RETURN: 'How many returned?', DAMAGED: 'How many damaged?', COUNT: 'How many in total, racks plus second floor?' }[sess.mode]) + ' <span class="small">' + esc(netLabel(sess.net)) + ' · type a number or scan QTY</span>';
       else if (sess.mode) p = esc(sess.mode + ' mode · ' + MODE_HELP[sess.mode]);
       else p = 'Scan a box label or a batch label';
@@ -364,10 +375,20 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (acts) acts.innerHTML = sess.emp ? '<div class="acts-h">' + (sess.mode ? 'Doing: <b>' + esc(ACTS[sess.mode]) + '</b> · tap again to stop' : 'What are you doing? Tap one, or just scan a box and the app will ask') + '</div><div class="acts-g">' +
       ACT_ORDER.map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
     var qb = document.getElementById('qbar');
-    if (qb) qb.innerHTML = sess.await === 'qty' ? '<div class="qbtns">' + [1, 2, 3, 4, 5, 10, 20].map(function (q) { return '<button type="button" class="act" data-q="' + q + '">' + q + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>' : '';
+    if (qb) qb.innerHTML = sess.await === 'qty' ? '<div class="qbtns">' + [1, 2, 3, 4, 5, 10, 20].map(function (q) { return '<button type="button" class="act" data-q="' + q + '">' + q + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>'
+      : sess.await === 'bcqty' ? '<div class="qbtns">' + boxQtyButtons().map(function (q) { return '<button type="button" class="act" data-q="' + q[0] + '">' + esc(q[1]) + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>' : '';
+    var ub = document.getElementById('undoBar'), u = undoState();
+    if (ub) ub.innerHTML = u && !/reason$/.test(sess.await || '') ? '<button type="button" class="act ghost undo" data-undo="1">Undo my last scan: ' + esc(u.what) + '</button>' : '';
   }
-  var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count' };
-  var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT'];
+  function boxQtyButtons() { // box count: 0 = empty, the box's full number, and a few common numbers
+    var bc = sess.bc, bx = BOXES[bc.loc], n = sess.net, full = bx ? (bx.mix ? bx.mix[n.id] : bx.cap) : 0;
+    var list = [[0, '0 · empty']];
+    [1, 2, 3, 5, 10].forEach(function (q) { if (q !== full) list.push([q, String(q)]); });
+    if (full) list.push([full, full + ' · full']);
+    return list;
+  }
+  var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count', BOXCOUNT: 'Count boxes' };
+  var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT', 'BOXCOUNT'];
   function boxActions(code, box, list) { // scan first, choose after: the actions that make sense for this box
     if (code === FLOOR2 || !box) return ['OUT', 'FBA', 'RETURN', 'COUNT'];
     var empty = isEmpty(code), n = list[0];
@@ -392,10 +413,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       var w = worker(code); if (!w) { fb('Unknown badge <b>' + esc(code) + '</b>. ' + (sheetOn() ? 'Add it to the Workers tab of the Google Sheet.' : 'Add it in Settings.'), 'bad'); return; }
       sess.emp = code; S.settings.me = code; save(); sess.mode = null; sess.await = null; fb('Hello ' + esc(w.name) + '.', 'ok'); paint(); return;
     }
-    if (code === 'CMD-CANCEL') { sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; fb('Cleared.', 'ok'); paint(); return; }
+    if (code === 'CMD-CANCEL') { sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; sess.bc = null; fb('Cleared.', 'ok'); paint(); return; }
     if (!sess.emp) { fb('Scan your worker badge first, so the system knows who did this.', 'bad'); return; }
-    var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY)$/.exec(code);
-    if (m) { sess.mode = m[1]; sess.await = null; sess.wo = null; fb(esc(m[1]) + ' mode on. ' + esc(MODE_HELP[m[1]]), 'ok'); paint(); return; }
+    if (code === 'CMD-UNDO') { startUndo(); return; }
+    var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY|BOXCOUNT)$/.exec(code);
+    if (m && m[1] === 'BOXCOUNT' && !sheetNew()) { fb(OLD_SHEET + 'use the count sheet on the Stock page.', 'bad'); return; }
+    if (m) { sess.mode = m[1]; sess.await = null; sess.wo = null; sess.bc = null; fb(esc(m[1] === 'BOXCOUNT' ? 'BOX COUNT' : m[1]) + ' mode on. ' + esc(MODE_HELP[m[1]]) + (m[1] === 'BOXCOUNT' ? ' ' + countProgressText() : ''), 'ok'); paint(); return; }
+    if (/reason$/.test(sess.await || '')) { fb('Tap a reason first, or scan CANCEL.', 'bad'); return; }
     var q = /^QTY-(\d+)$/.exec(code) || (/^\d+$/.test(code) ? [code, code] : null);
     if (q) { applyQty(parseInt(q[1], 10)); return; }
     if (/^WO-\d+$/.test(code)) { scanBatch(code); return; }
@@ -407,9 +431,10 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     sess.mode = null; sess.await = null; var n = BY_ID[b.net];
     if (b.stage >= 6) { fb(esc(wo) + ' is already on the rack at <code>' + esc(b.loc) + '</code>.', 'warn'); return; }
     if (b.stage === 5) { sess.wo = wo; sess.await = 'loc'; fb(esc(wo) + ' · ' + esc(netLabel(n)) + ' · ' + b.good + ' nets ready for the rack. Scan the box label.', 'ok'); paint(); return; }
-    var next = b.stage + 1;
+    var next = b.stage + 1, prevB = { stage: b.stage, good: b.good, loc: b.loc || null };
     b.stage = next; b.history.push({ stage: next, by: sess.emp, qty: b.good, rej: 0, t: now() });
-    addLog({ type: 'STAGE', stage: next, who: sess.emp, wo: wo, net: b.net, qty: b.good, note: STAGES[next] });
+    var sev = addLog({ type: 'STAGE', stage: next, who: sess.emp, wo: wo, net: b.net, qty: b.good, note: STAGES[next] });
+    remember(sev, { batch: { wo: wo, prev: prevB } });
     save(); sess.last = wo;
     fb('<b>' + esc(STAGES[next]) + '</b> done for ' + esc(wo) + ' · ' + esc(netLabel(n)) + ' · ' + b.good + ' nets · by ' + esc(wname(sess.emp)), 'ok');
     var adj = document.getElementById('adjust');
@@ -418,11 +443,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       e.stopPropagation(); var g = parseInt(document.getElementById('adjGood').value, 10); var last = b.history[b.history.length - 1];
       if (!(g >= 0) || g > last.qty + last.rej) { toast('Enter a number up to ' + (last.qty + last.rej) + '.'); return; }
       var prev = last.qty + last.rej; last.rej = prev - g; last.qty = g; b.good = g; S.log[0].qty = g; S.log[0].note = STAGES[next] + (last.rej ? ' · ' + last.rej + ' rejected' : ''); queue({ type: 'ADJUST', who: sess.emp, wo: b.id, net: b.net, qty: g, rej: prev - g, note: 'Good count corrected at ' + STAGES[next] });
+      if (S.undo && S.undo.id === sev.id && S.undo.batch) S.undo.batch.rej = last.rej; // undo also takes back the rejected nets
+
       save(); adj.innerHTML = ''; fb('Saved: ' + g + ' good' + (last.rej ? ', ' + last.rej + ' rejected' : '') + '.', 'ok'); refocus();
     };
     paint();
   }
-  var MODE_HELP = { OUT: 'scan the PICK box', FBA: 'scan a box label or 2F', RETURN: 'scan the PICK box', DAMAGED: 'scan the PICK box', COUNT: 'scan any box of the net',
+  var MODE_HELP = { OUT: 'scan the PICK box', FBA: 'scan a box label or 2F', RETURN: 'scan the PICK box', DAMAGED: 'scan the PICK box', COUNT: 'scan any box of the net', BOXCOUNT: 'scan a shelf label (or 2F), then type how many nets are in that box.',
     SWAP: 'scan the backup box you are bringing down', REFILL: 'scan the empty box you are filling from the second floor', EMPTY: 'scan the box that just went empty' };
   function fmtD(iso) { return iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : 'date unknown'; }
   function boxRec(code) { return S.boxes[code] || null; } // null = not tracked yet (treated as full, date unknown)
@@ -454,13 +481,16 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
           fb('First made, first shipped: <code>' + esc(code) + '</code> still has older nets (' + esc(fmtD((boxRec(code) || {}).made)) + '). New nets never go on top. ' + (empt.length ? 'Use the empty box <code>' + esc(empt.join(', ')) + '</code>' : 'Put them on the second floor (scan <b>2F</b>)') + '.', 'bad'); return;
         }
       }
+      var own = code !== FLOOR2 && box.kind === 'own', pbx = own ? snapBoxes([code]) : {}, st = {}; st[n.id] = -b.good;
       b.stage = 6; b.loc = code; S.stock[n.id] = onHand(n.id) + b.good;
-      if (code !== FLOOR2 && box.kind === 'own') setBox(code, { state: 'full', net: n.id, wo: b.id, made: b.created });
+      if (own) setBox(code, { state: 'full', net: n.id, wo: b.id, made: b.created });
       b.history.push({ stage: 6, by: sess.emp, qty: b.good, rej: 0, t: now(), loc: code });
-      addLog({ type: 'IN', who: sess.emp, wo: b.id, net: n.id, qty: b.good, loc: code, made: b.created, note: code === FLOOR2 ? 'Rack-in · second floor' : 'Rack-in' });
+      var iev = addLog({ type: 'IN', who: sess.emp, wo: b.id, net: n.id, qty: b.good, loc: code, made: b.created, note: code === FLOOR2 ? 'Rack-in · second floor' : 'Rack-in' });
+      remember(iev, { stock: st, batch: { wo: b.id, prev: { stage: 5, good: b.good, loc: null } }, boxes: pbx });
       save(); fb('<b>' + b.good + ' nets in</b> at <code>' + esc(code === FLOOR2 ? 'second floor' : code) + '</code>. ' + esc(netLabel(n)) + ' now ' + onHand(n.id) + ' in total.', 'ok');
       sess.wo = null; sess.await = null; paint(); return;
     }
+    if (sess.mode === 'BOXCOUNT') { doBoxCount(code, box, list); return; }
     if (code === FLOOR2) {
       if (sess.mode === 'FBA') { fb('Second floor. Now scan the product or a box label of the net going to FBA.', 'warn'); return; }
       fb('<b>2F</b> is the second floor. Use it at rack-in (after Pack) for bulk stock.', 'warn'); return;
@@ -469,7 +499,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (mode === 'SWAP') { doSwap(code, list); return; }
     if (mode === 'REFILL') { doRefill(code, list); return; }
     if (mode === 'EMPTY') {
-      setBox(code, { state: 'empty' }); addLog({ type: 'EMPTY', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, note: 'Box empty' }); save();
+      var pe = snapBoxes([code]); setBox(code, { state: 'empty' });
+      remember(addLog({ type: 'EMPTY', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, note: 'Box empty' }), { boxes: pe }); save();
       var n0 = list[0], fbk = list.length === 1 && code === n0.pick ? fullBackups(n0) : [];
       fb('<code>' + esc(code) + '</code> marked empty. It is on the refill list.' + (fbk.length ? ' <b>Swap now:</b> bring down <code>' + esc(fbk[0]) + '</code> (scan SWAP, then that box).' : ''), 'ok'); paint(); return;
     }
@@ -502,9 +533,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (fb2.length && fb2[0] !== code && (boxRec(fb2[0]) || {}).made && (boxRec(code) || {}).made && boxRec(fb2[0]).made < boxRec(code).made) {
       fb('First made, first shipped: <code>' + esc(fb2[0]) + '</code> is older (' + esc(fmtD(boxRec(fb2[0]).made)) + '). Bring that one down first.', 'bad'); return;
     }
-    var rec = boxRec(code) || { state: 'full', net: n.id, made: null };
+    var rec = boxRec(code) || { state: 'full', net: n.id, made: null }, ps = snapBoxes([pick, code]);
     setBox(pick, Object.assign({}, rec, { state: 'full' })); setBox(code, { state: 'empty' });
-    addLog({ type: 'SWAP', who: sess.emp, net: list.length === 1 ? n.id : '', loc: code, to: pick, made: rec.made || '', note: 'Swap ' + code + ' → ' + pick });
+    remember(addLog({ type: 'SWAP', who: sess.emp, net: list.length === 1 ? n.id : '', loc: code, to: pick, made: rec.made || '', note: 'Swap ' + code + ' → ' + pick }), { boxes: ps });
     save(); fb('<b>Swap:</b> full box from <code>' + esc(code) + '</code> goes into <code>' + esc(pick) + '</code>. Put the empty box up in <code>' + esc(code) + '</code>. It is now on the refill list.', 'ok'); paint();
   }
   function doRefill(code, list) {
@@ -512,12 +543,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (box.kind === 'own' && !isEmpty(code) && boxRec(code)) { fb('First made, first shipped: <code>' + esc(code) + '</code> is not empty. Never pour new nets on top. Refill it only when it is empty.', 'bad'); return; }
     var srcs = list.map(function (n) { return [n, oldest2F(n)]; });
     var made = srcs.map(function (x) { return x[1] ? x[1].created : ''; }).filter(Boolean).sort()[0] || null;
+    var pr = snapBoxes([code]);
     setBox(code, { state: 'full', net: box.kind === 'own' ? list[0].id : '', wo: srcs[0][1] ? srcs[0][1].id : '', made: made });
-    addLog({ type: 'REFILL', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, wo: srcs[0][1] ? srcs[0][1].id : '', made: made || '', note: 'Refill from second floor' + (box.kind === 'bin' ? ' · 3 bins, new nets to the back' : '') });
+    remember(addLog({ type: 'REFILL', who: sess.emp, net: list.length === 1 ? list[0].id : '', loc: code, wo: srcs[0][1] ? srcs[0][1].id : '', made: made || '', note: 'Refill from second floor' + (box.kind === 'bin' ? ' · 3 bins, new nets to the back' : '') }), { boxes: pr });
     save();
     fb('<b>Refill</b> <code>' + esc(code) + '</code> from the second floor' + (box.kind === 'bin' ? ': top up each color bin, new nets at the back. ' : '. ') + srcs.map(function (x) { return x[1] ? esc(x[0].color) + ': take batch <b>' + esc(x[1].id) + '</b> (made ' + esc(fmtD(x[1].created)) + ', the oldest)' : ''; }).filter(Boolean).join(' · '), 'ok'); paint();
   }
-  function applyQty(q) {
+  function applyQty(q, reason) {
+    if (sess.await === 'bcqty' && sess.bc) { recordBoxCount(q); return; }
     if (sess.await !== 'qty' || !sess.net) {
       var adjG = document.getElementById('adjGood');
       if (adjG) { adjG.value = q; document.getElementById('adjSave').click(); return; }
@@ -525,22 +558,179 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     }
     var n = sess.net, before = onHand(n.id), mode = sess.mode;
     if ((mode === 'OUT' || mode === 'FBA') && q > before) { fb('Only ' + before + ' on hand for ' + esc(netLabel(n)) + '. Check the box, or scan COUNT to correct it.', 'bad'); return; }
+    if (mode === 'COUNT' && q !== before && !reason) { // every count change needs a reason
+      sess.await = 'reason'; paint();
+      fb('<b>Count ' + q + '</b> · ' + esc(netLabel(n)) + ' · the system had ' + before + ' (' + (q > before ? '+' : '') + (q - before) + '). <b>Why is it different?</b>', 'warn');
+      reasonPicker(COUNT_REASONS, function (r) { sess.await = 'qty'; applyQty(q, r); });
+      return;
+    }
     if (mode === 'OUT' || mode === 'FBA') S.stock[n.id] = before - q;
     else if (mode === 'RETURN') S.stock[n.id] = before + q;
     else if (mode === 'COUNT') S.stock[n.id] = q;
-    addLog({ type: mode, who: sess.emp, net: n.id, qty: q, loc: sess.loc, note: mode === 'COUNT' ? 'Counted (was ' + before + ')' : ({ OUT: 'Order pick', FBA: 'FBA shipment', RETURN: 'Customer return · good', DAMAGED: 'Customer return · damaged, not restocked' }[mode]) });
+    var ev = addLog({ type: mode, who: sess.emp, net: n.id, qty: q, loc: sess.loc, reason: reason || '', note: mode === 'COUNT' ? 'Counted (was ' + before + ')' + (reason ? ' · reason: ' + reason : ' · matches') : ({ OUT: 'Order pick', FBA: 'FBA shipment', RETURN: 'Customer return · good', DAMAGED: 'Customer return · damaged, not restocked' }[mode]) });
+    var sd = {}; if (onHand(n.id) !== before) sd[n.id] = before - onHand(n.id);
+    remember(ev, { stock: sd });
     save();
     var after = onHand(n.id), warn = after <= n.refillAt && (mode === 'OUT' || mode === 'FBA');
     fb('<b>' + esc(mode) + ' ' + q + '</b> · ' + esc(netLabel(n)) + ' · now ' + after + ' in total.' + (warn ? ' <b>Below refill level.</b>' : ''), warn ? 'warn' : 'ok');
     sess.await = null; sess.net = null; paint();
   }
 
+  // ---------- undo my last scan, reasons for count changes ----------
+  var UNDO_MIN = 15; // a worker can undo their own last scan on this device for 15 minutes
+  var UNDO_REASONS = ['Wrong box', 'Wrong number', 'Wrong net or color', 'Scanned twice', 'Other'];
+  var COUNT_REASONS = ['Opening count', 'Full count (day 14)', 'Picked without scanning', 'Found extra nets', 'Damaged, thrown out', 'Counted wrong before', 'Other'];
+  var SHEET_V = 4; // Code.gs version that understands UNDO and box counts
+  var OLD_SHEET = 'The Google Sheet script is an older version. Ask the manager to paste the new google-sheet/Code.gs and deploy a new version. Until then, ';
+  function sheetNew() { return !sheetOn() || (S.sheetV || 0) >= SHEET_V; }
+  function clone(o) { return o == null ? null : JSON.parse(JSON.stringify(o)); }
+  function snapBoxes(codes) { var o = {}; codes.forEach(function (c) { o[c] = clone(S.boxes[c] || null); }); return o; }
+  function boxSig(r) { return r ? (r.state || 'full') + '|' + (r.made || '') : 'none'; }
+  function undoWhat(ev) {
+    var n = BY_ID[ev.net];
+    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type, ev.qty != null && ev.type !== 'STAGE' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'second floor' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
+  }
+  // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
+  function remember(ev, r) {
+    var u = { id: ev.id, type: ev.type, t: ev.t, who: ev.who, what: undoWhat(ev), stock: r.stock || {}, batch: null, boxes: {}, counts: {} };
+    if (r.batch) { var b = S.batches[r.batch.wo]; u.batch = { wo: r.batch.wo, prev: r.batch.prev, after: { stage: b.stage, loc: b.loc || null }, rej: 0 }; }
+    Object.keys(r.boxes || {}).forEach(function (c) { u.boxes[c] = { prev: r.boxes[c], after: boxSig(S.boxes[c]) }; });
+    Object.keys(r.counts || {}).forEach(function (k) { u.counts[k] = { prev: r.counts[k], after: S.counts[k] ? Number(S.counts[k].qty) : null }; });
+    S.undo = u;
+  }
+  function undoState() {
+    var u = S.undo;
+    if (!u || !sess.emp || u.who !== sess.emp) return null;
+    if (Date.now() - new Date(u.t).getTime() > UNDO_MIN * 60000) return null;
+    return u;
+  }
+  function undoConflict(u) { // someone else changed the same thing since: do not undo blindly
+    if (u.batch) {
+      var b = S.batches[u.batch.wo];
+      if (!b || b.stage !== u.batch.after.stage || (b.loc || null) !== u.batch.after.loc) return 'batch ' + u.batch.wo + ' has moved on since then' + (b ? ' (now: ' + STAGES[b.stage] + ')' : '');
+    }
+    var bad = Object.keys(u.boxes).filter(function (c) { return boxSig(S.boxes[c]) !== u.boxes[c].after; });
+    if (bad.length) return 'box ' + bad.join(', ') + ' was changed since then';
+    var badC = Object.keys(u.counts).filter(function (k) { return (S.counts[k] ? Number(S.counts[k].qty) : null) !== u.counts[k].after; });
+    if (badC.length) return 'that box was counted again since then';
+    var neg = Object.keys(u.stock).filter(function (id) { return onHand(id) + u.stock[id] < 0; });
+    if (neg.length) return 'stock of ' + neg.map(function (id) { return BY_ID[id] ? netLabel(BY_ID[id]) : id; }).join(', ') + ' would go below 0';
+    return '';
+  }
+  function showOnPhone(id) { if (TOUCH) setTimeout(function () { var el = document.getElementById(id); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60); }
+  function reasonPicker(list, done) { // tap a reason; "Other" asks for a few words
+    var adj = document.getElementById('adjust'); if (!adj) return;
+    showOnPhone('adjust');
+    adj.innerHTML = '<div class="acts-g reasons">' + list.map(function (r) { return '<button type="button" class="act" data-why="' + esc(r) + '">' + esc(r) + '</button>'; }).join('') + '<button type="button" class="act ghost" data-why="">Cancel</button></div>';
+    adj.querySelectorAll('[data-why]').forEach(function (b) { b.onclick = function (e) {
+      e.stopPropagation(); var r = b.dataset.why;
+      if (!r) { adj.innerHTML = ''; sess.await = null; sess.net = null; fb('Cancelled. Nothing was changed.', 'ok'); paint(); if (!TOUCH) refocus(); return; } // the mode stays on
+      if (r !== 'Other') { adj.innerHTML = ''; done(r); if (!TOUCH) refocus(); return; }
+      adj.innerHTML = '<div class="qtyrow"><label class="f" style="flex:1">What happened?<input id="whyTxt" maxlength="80" style="width:100%"></label><button type="button" class="btn primary" id="whyOk">Save</button></div>';
+      var t = document.getElementById('whyTxt'), ok = function (ev) { if (ev) ev.stopPropagation(); var v = t.value.trim(); if (!v) { toast('Type a few words.'); return; } adj.innerHTML = ''; done('Other: ' + v); if (!TOUCH) refocus(); };
+      document.getElementById('whyOk').onclick = ok; t.onkeydown = function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); ok(); } }; t.focus();
+    }; });
+  }
+  function startUndo() {
+    if (!sheetNew()) { fb(OLD_SHEET + 'fix mistakes with COUNT.', 'bad'); return; }
+    var u = undoState();
+    if (!u) { fb('Nothing to undo. You can undo only your own last scan on this device, within ' + UNDO_MIN + ' minutes. For an older mistake, scan COUNT and type the right number.', 'warn'); return; }
+    var c = undoConflict(u);
+    if (c) { fb('Cannot undo: ' + esc(c) + '. Scan COUNT and type the right number instead.', 'bad'); return; }
+    sess.wo = null; sess.net = null; sess.bc = null; sess.await = 'ureason'; paint(); // the mode stays on, so a box count carries on after an undo
+    fb('Undo <b>' + esc(u.what) + '</b>? <b>Tap why.</b>', 'warn');
+    reasonPicker(UNDO_REASONS, doUndo);
+  }
+  function doUndo(reason) {
+    var u = undoState(); sess.await = null;
+    if (!u) { fb('Too late to undo. Scan COUNT and type the right number.', 'bad'); paint(); return; }
+    var c = undoConflict(u); if (c) { fb('Cannot undo: ' + esc(c) + '.', 'bad'); paint(); return; }
+    var ev = { type: 'UNDO', who: sess.emp, undoes: u.id, undoType: u.type, reason: reason, note: 'Undo ' + u.what + ' · reason: ' + reason, stock: u.stock, boxes: {}, counts: {} };
+    var ids = Object.keys(u.stock);
+    ids.forEach(function (id) { S.stock[id] = onHand(id) + u.stock[id]; });
+    if (ids.length === 1) { ev.net = ids[0]; ev.qty = u.stock[ids[0]]; }
+    if (u.batch) {
+      var b = S.batches[u.batch.wo], p = u.batch.prev;
+      b.stage = p.stage; b.good = p.good; b.loc = p.loc; b.history = b.history.filter(function (h) { return h.stage <= p.stage; });
+      ev.wo = b.id; ev.net = ev.net || b.net;
+      ev.batch = { wo: b.id, stage: p.stage, good: p.good, loc: p.loc || '', rej: u.batch.rej || 0 };
+    }
+    Object.keys(u.boxes).forEach(function (code) {
+      var pr = u.boxes[code].prev;
+      if (pr) S.boxes[code] = pr; else delete S.boxes[code];
+      ev.boxes[code] = pr ? { state: pr.state || 'full', net: pr.net || '', wo: pr.wo || '', made: pr.made || '' } : null;
+    });
+    Object.keys(u.counts).forEach(function (k) {
+      var pr = u.counts[k].prev;
+      if (pr) S.counts[k] = pr; else delete S.counts[k];
+      ev.counts[k] = pr ? { box: pr.box, net: pr.net, qty: pr.qty } : null;
+      ev.loc = ev.loc || k.split('|')[0]; ev.net = ev.net || k.split('|')[1];
+    });
+    S.log.forEach(function (e) { if (e.id === u.id && !isUndone(e)) { e.undone = true; e.note = (e.note || '') + ' · UNDONE'; } });
+    S.undo = null; addLog(ev); save();
+    var n = ev.net && BY_ID[ev.net];
+    fb('<b>Undone:</b> ' + esc(u.what) + '. Reason saved: ' + esc(reason) + '.' + (n ? ' ' + esc(netLabel(n)) + ' is ' + onHand(n.id) + ' in total.' : ''), 'ok');
+    paint();
+  }
+
+  // ---------- box count (opening count, day 14 full count): scan the shelf, type the number ----------
+  function countKey(box, net) { return box + '|' + net; }
+  function boxCounted(code) { return BOXES[code].nets.every(function (id) { return S.counts[countKey(code, id)]; }); }
+  function countProgress() {
+    var codes = Object.keys(BOXES), done = codes.filter(boxCounted).length;
+    var floor = Object.keys(S.counts).filter(function (k) { return k.indexOf(FLOOR2 + '|') === 0; }).length;
+    return { done: done, total: codes.length, floor: floor };
+  }
+  function countProgressText() { var p = countProgress(); return p.done + ' of ' + p.total + ' boxes counted' + (p.floor ? ', ' + p.floor + ' nets counted on the second floor' : '') + '.'; }
+  function doBoxCount(code, box, list) {
+    if (code === FLOOR2) { chooseFloorNet(); return; }
+    if (!box) { fb('In box count, scan a shelf label, or <b>2F</b> for the second floor.', 'bad'); return; }
+    if (window.ArmorXCam) window.ArmorXCam.close();
+    sess.bc = { loc: code, nets: list.map(function (n) { return n.id; }), i: 0 };
+    askBoxQty('');
+  }
+  function chooseFloorNet() {
+    if (window.ArmorXCam) window.ArmorXCam.close();
+    sess.bc = null; sess.await = 'bcnet'; paint();
+    var adj = document.getElementById('adjust'), sizes = Array.from(new Set(NETS.map(function (n) { return n.size; })));
+    adj.innerHTML = '<div class="qtyrow"><label class="f">Size<select id="bcSize">' + sizes.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></label>' +
+      COLORS.map(function (c) { return '<button type="button" class="btn colorbtn" data-col="' + c + '"><span class="sw sw-' + c + '"></span>' + c + '</button>'; }).join('') + '</div>';
+    fb('<b>Second floor.</b> Pick the size and tap the color, then type how many of that net are on the second floor in total.', 'ok');
+    adj.querySelectorAll('[data-col]').forEach(function (b) { b.onclick = function (e) {
+      e.stopPropagation(); var sz = document.getElementById('bcSize').value, n = NETS.filter(function (x) { return x.size === sz && x.color === b.dataset.col; })[0];
+      if (!n) { toast('That size has no ' + b.dataset.col + ' net.'); return; }
+      adj.innerHTML = ''; sess.bc = { loc: FLOOR2, nets: [n.id], i: 0 }; askBoxQty(''); if (!TOUCH) refocus();
+    }; });
+  }
+  function askBoxQty(before) {
+    var bc = sess.bc, n = BY_ID[bc.nets[bc.i]], prev = S.counts[countKey(bc.loc, n.id)], bx = BOXES[bc.loc];
+    sess.net = n; sess.loc = bc.loc; sess.await = 'bcqty';
+    fb(before + '<code>' + esc(bc.loc === FLOOR2 ? '2F' : bc.loc) + '</code> · ' + (bx ? (bx.role === 'pick' ? 'PICK' : 'BACKUP') + (bc.nets.length > 1 ? ' · 3-bin box, color ' + (bc.i + 1) + ' of ' + bc.nets.length : '') + ' · ' : 'second floor · ') + '<b>' + esc(netLabel(n)) + '</b>. ' +
+      (prev ? 'Already counted: <b>' + prev.qty + '</b> by ' + esc(wname(prev.by)) + '. A new number replaces it.' : 'Count the nets and type the number.'), 'ok');
+    paint(); showOnPhone('qbar');
+  }
+  function recordBoxCount(q) {
+    var bc = sess.bc, n = BY_ID[bc.nets[bc.i]], bx = BOXES[bc.loc];
+    if (bx && q > bx.cap * 2) { fb('<b>' + q + '</b> is more than this box can hold (' + bx.cap + '). Count again and type the number.', 'bad'); return; }
+    var key = countKey(bc.loc, n.id), prev = clone(S.counts[key] || null), pc = {}; pc[key] = prev;
+    S.counts[key] = { box: bc.loc, net: n.id, qty: q, at: now(), by: sess.emp };
+    remember(addLog({ type: 'BOXCOUNT', who: sess.emp, net: n.id, qty: q, loc: bc.loc, note: 'Box count' + (prev ? ' (replaces ' + prev.qty + ')' : '') }), { counts: pc });
+    save();
+    var said = 'Saved <b>' + esc(n.color) + ' ' + q + '</b>. ';
+    bc.i++;
+    if (bc.i < bc.nets.length) { askBoxQty(said); return; }
+    sess.bc = null; sess.await = null; sess.net = null;
+    fb((bc.nets.length > 1 ? said : '') + '<b>' + esc(bc.loc === FLOOR2 ? netLabel(n) + ' on the second floor' : bc.loc) + ': ' + q + '</b> counted. ' + countProgressText() + ' Scan the next ' + (bc.loc === FLOOR2 ? 'shelf label or 2F' : 'shelf label') + '.', 'ok');
+    paint();
+  }
+
   // ---------- stock ----------
   function walkSorted() { return NETS.slice().sort(function (a, b) { return sideOrder(a.pick, b.pick) || COLORS.indexOf(a.color) - COLORS.indexOf(b.color); }); }
   function viewStock() {
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><div class="row" style="align-items:flex-end"><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label><button class="btn" id="cntPrint">Print count sheet</button><button class="btn primary" id="cntMode">Enter counts</button></div></div>' +
-      '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted on the racks and on the second floor (2F). Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is.</div>' +
-      '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span><button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
+      '<div class="card" id="bcCard"></div>' +
+      '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted on the racks and on the second floor (2F). Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is. If any count is different from the system, pick a reason before saving.</div>' +
+      '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;align-items:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span>' + reasonSelect('cntWhy') + '<button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
     var counting = false;
     function draw() {
       var q = document.getElementById('q').value.trim().toLowerCase();
@@ -563,13 +753,18 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     document.getElementById('cntMode').onclick = function () { setMode(true); };
     document.getElementById('cntCancel').onclick = function () { setMode(false); };
     document.getElementById('cntSave').onclick = function () {
-      var who = sess.emp || S.settings.me || 'MANAGER', k = 0;
+      var who = sess.emp || S.settings.me || 'MANAGER', k = 0, rows = [];
       app.querySelectorAll('#tb tr').forEach(function (tr) {
         var r = tr.querySelector('[data-k=r]').value, f = tr.querySelector('[data-k=f]').value;
         if (r === '' && f === '') return;
-        var n = BY_ID[tr.dataset.id], before = onHand(n.id), tot = Number(r || 0) + Number(f || 0);
+        rows.push({ n: BY_ID[tr.dataset.id], r: Number(r || 0), f: Number(f || 0) });
+      });
+      var changed = rows.filter(function (x) { return x.r + x.f !== onHand(x.n.id); }).length, why = readReason('cntWhy');
+      if (changed && why === null) { document.getElementById('cntMsg').textContent = changed + ' counts are different from the system. Pick a reason first.'; return; }
+      rows.forEach(function (x) {
+        var n = x.n, before = onHand(n.id), tot = x.r + x.f, diff = tot !== before;
         S.stock[n.id] = tot; k++;
-        addLog({ type: 'COUNT', who: who, net: n.id, qty: tot, loc: n.pick, note: 'Count sheet: racks ' + Number(r || 0) + ' + 2F ' + Number(f || 0) + ' (was ' + before + ')' });
+        addLog({ type: 'COUNT', who: who, net: n.id, qty: tot, loc: n.pick, reason: diff ? why : '', note: 'Count sheet: racks ' + x.r + ' + 2F ' + x.f + ' (was ' + before + ')' + (diff ? ' · reason: ' + why : ' · matches') });
       });
       save(); toast(k ? k + ' counts saved.' : 'Nothing filled in.'); setMode(false);
     };
@@ -580,6 +775,65 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       printLabels([t], 'A4P');
     };
     document.getElementById('q').oninput = draw; draw();
+    drawBoxCount(false);
+  }
+  function reasonSelect(id) {
+    return '<label class="f">Reason for changes<select id="' + id + '"><option value="">— pick a reason —</option>' + COUNT_REASONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f">Details (for Other)<input id="' + id + 'Txt" maxlength="80"></label>';
+  }
+  function readReason(id) { // null = not given
+    var v = document.getElementById(id).value, t = document.getElementById(id + 'Txt').value.trim();
+    if (!v) return null;
+    if (v === 'Other') return t ? 'Other: ' + t : null;
+    return t ? v + ': ' + t : v;
+  }
+  // box count review: per net, every home box counted -> new total = boxes + second floor
+  function countRows() {
+    return walkSorted().map(function (n) {
+      var homes = homeOf(n), got = homes.filter(function (c) { return S.counts[countKey(c, n.id)]; }), fl = S.counts[countKey(FLOOR2, n.id)];
+      var racks = got.reduce(function (a, c) { return a + Number(S.counts[countKey(c, n.id)].qty); }, 0), floor = fl ? Number(fl.qty) : 0;
+      return { n: n, racks: racks, floor: floor, fl: !!fl, total: racks + floor, missing: homes.filter(function (c) { return got.indexOf(c) < 0; }), any: got.length > 0 || !!fl };
+    });
+  }
+  function drawBoxCount(open) {
+    var el = document.getElementById('bcCard'); if (!el) return;
+    var p = countProgress(), rows = countRows().filter(function (x) { return x.any; });
+    var ready = rows.filter(function (x) { return !x.missing.length; }), part = rows.filter(function (x) { return x.missing.length; });
+    var diff = ready.filter(function (x) { return x.total !== onHand(x.n.id); });
+    var left = Object.keys(BOXES).filter(function (c) { return !boxCounted(c); }).sort(sideOrder);
+    el.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><h3>Box count <span class="small muted">(opening count, day 14 count)</span></h3>' + (rows.length ? '<button class="btn" id="bcOpen">' + (open ? 'Hide' : 'Review and apply') + '</button>' : '') + '</div>' +
+      '<div class="small">' + (rows.length ? '<b>' + p.done + ' of ' + p.total + '</b> boxes counted' + (p.floor ? ', ' + p.floor + ' nets on the second floor' : '') + '. Counts change stock only when you press Apply.' : 'No box counts yet. On a phone: Scan station → <b>Count boxes</b>, scan each shelf label and type how many are in it. Scan <b>2F</b> for the second floor.') + '</div>' +
+      (open ? '<details class="small"' + (left.length && left.length <= 40 ? ' open' : '') + '><summary>' + left.length + ' boxes not counted yet</summary><div class="mono">' + (left.map(esc).join(' ') || 'none') + '</div></details>' +
+        '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In system</th><th>Boxes</th><th>2F</th><th>New total</th><th>Change</th></tr></thead><tbody>' +
+        ready.map(function (x) { var d = x.total - onHand(x.n.id); return '<tr><td><span class="sw sw-' + x.n.color + '"></span>' + esc(netLabel(x.n)) + '</td><td>' + onHand(x.n.id) + '</td><td>' + x.racks + '</td><td>' + (x.fl ? x.floor : '<span class="muted">0</span>') + '</td><td><b>' + x.total + '</b></td><td>' + (d ? '<b>' + (d > 0 ? '+' : '') + d + '</b>' : '<span class="muted">same</span>') + '</td></tr>'; }).join('') +
+        (part.length ? '<tr><td colspan="6" class="small"><b>Not applied yet (' + part.length + ' nets), boxes still to count:</b> ' + part.map(function (x) { return esc(netLabel(x.n)) + ' <code>' + esc(x.missing.join(' ')) + '</code>'; }).join(' · ') + '</td></tr>' : '') +
+        '</tbody></table></div><div class="small muted">A net is applied when all its boxes (pick and backups) are counted. Its second floor count is added if one was entered, otherwise the second floor counts as 0. Boxes counted 0 are marked empty and go on the refill list.</div>' +
+        '<div class="row" style="justify-content:flex-end;align-items:flex-end"><span class="small muted" id="bcMsg"></span>' + (diff.length ? reasonSelect('bcWhy') : '') + '<button class="btn primary" id="bcApply"' + (ready.length ? '' : ' disabled') + '>Apply ' + ready.length + ' counts</button></div>' : '');
+    var ob = document.getElementById('bcOpen'); if (ob) ob.onclick = function () { drawBoxCount(!open); };
+    var ab = document.getElementById('bcApply'); if (ab) ab.onclick = function () { applyBoxCount(ready, diff.length ? readReason('bcWhy') : '', diff.length); };
+  }
+  function applyBoxCount(ready, why, ndiff) {
+    var msg = document.getElementById('bcMsg'), who = sess.emp || S.settings.me;
+    if (!who) { msg.textContent = 'Pick your name on the Scan station first, so the counts carry your name.'; return; }
+    if (sheetOn() && !sheetNew()) { msg.textContent = OLD_SHEET + 'use the count sheet.'; return; }
+    if (ndiff && why === null) { msg.textContent = ndiff + ' nets are different from the system. Pick a reason first.'; return; }
+    var used = [], boxes = {};
+    ready.forEach(function (x) {
+      var n = x.n, before = onHand(n.id), d = x.total !== before;
+      S.stock[n.id] = x.total;
+      addLog({ type: 'COUNT', who: who, net: n.id, qty: x.total, loc: n.pick, reason: d ? why : '', note: 'Box count: boxes ' + x.racks + ' + 2F ' + x.floor + ' (was ' + before + ')' + (d ? ' · reason: ' + why : ' · matches') });
+      homeOf(n).forEach(function (c) { used.push(countKey(c, n.id)); boxes[c] = 1; });
+      if (x.fl) used.push(countKey(FLOOR2, n.id));
+    });
+    Object.keys(boxes).sort(sideOrder).forEach(function (c) { // counted boxes: 0 = empty (refill list), more = has nets
+      if (!boxCounted(c)) return;
+      var sum = BOXES[c].nets.reduce(function (a, id) { return a + Number(S.counts[countKey(c, id)].qty); }, 0);
+      if (sum === 0 && !isEmpty(c)) { S.boxes[c] = { state: 'empty', at: now(), by: who }; addLog({ type: 'EMPTY', who: who, loc: c, note: 'Box count: empty' }); }
+      else if (sum > 0 && isEmpty(c)) { var own = BOXES[c].kind === 'own' ? BOXES[c].nets[0] : ''; S.boxes[c] = { state: 'full', net: own, wo: '', made: null, at: now(), by: who }; addLog({ type: 'BOXSET', who: who, net: own, loc: c, state: 'full', note: 'Box count: ' + sum + ' nets in box' }); }
+    });
+    used.forEach(function (k) { delete S.counts[k]; });
+    addLog({ type: 'COUNTDONE', who: who, keys: used, note: 'Box count applied: ' + ready.length + ' nets' + (why ? ' · reason: ' + why : '') });
+    S.undo = null; save(); toast(ready.length + ' counts applied.'); route();
   }
 
   // ---------- pick list: paste today's self-ship orders, get them in walking order ----------
@@ -732,7 +986,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var off = document.getElementById('gsOff'); if (off) off.onclick = function () { S.settings.sheetUrl = ''; save(); toast('Disconnected. Data now stays in this browser.'); route(); };
     var gw = document.getElementById('gsWorkers'); if (gw) gw.onclick = function () { S.workers.forEach(function (w) { queue({ type: 'WORKER', who: w.id, name: w.name, role: w.role }); }); toast('Sending ' + S.workers.length + ' workers to the sheet.'); };
     document.getElementById('bk').onclick = function () { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' })); a.download = 'armorx-inventory-backup.json'; a.click(); };
-    document.getElementById('rs').onchange = function () { var f = this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { try { var d = JSON.parse(r.result); if (!d.stock || !d.batches) throw 0; S = d; save(); toast('Backup restored.'); route(); } catch (e) { toast('That file is not an ArmorX backup.'); } }; r.readAsText(f); };
+    document.getElementById('rs').onchange = function () { var f = this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { try { var d = JSON.parse(r.result); if (!d.stock || !d.batches) throw 0; S = d; S.counts = S.counts || {}; S.boxes = S.boxes || {}; save(); toast('Backup restored.'); route(); } catch (e) { toast('That file is not an ArmorX backup.'); } }; r.readAsText(f); };
     function ask(msg, fn) {
       var el = document.getElementById('confirmBox');
       el.innerHTML = '<div class="note row" style="align-items:center;justify-content:space-between"><span>' + msg + '</span><span class="row"><button class="btn danger" id="yes">Yes, do it</button><button class="btn" id="no">Keep my data</button></span></div>';
@@ -786,6 +1040,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (d.rates) Object.keys(d.rates).forEach(function (id) { if (BY_ID[id]) BY_ID[id].perDay = Number(d.rates[id]) || 0; });
     S.log = d.log || [];
     if (d.boxes && typeof d.boxes === 'object') { S.boxes = d.boxes; S.layout = window.LAYOUT_VERSION; }
+    if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
+    S.sheetV = Number(d.v) || 0;
     syncState.at = d.at || now(); syncState.err = null;
   }
   function pull() {

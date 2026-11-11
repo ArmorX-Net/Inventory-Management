@@ -34,7 +34,9 @@ See [LAYOUT.md](LAYOUT.md). In short: doornets on racks A–C, sizes in number o
 | Pick box empty | Picker | `CMD-SWAP` → the backup box brought down (oldest first). No backup: `CMD-EMPTY` → the box. |
 | Refill every 3–4 days | Rack person | **Refill list** tab → fill each empty box from the oldest second-floor batch → `CMD-REFILL` → the box |
 | Return | Anyone | `CMD-RETURN` (or `CMD-DAMAGED`) → pick box → quantity |
-| Fix a count | Anyone | `CMD-COUNT` → any box of the net → total quantity (racks + second floor) |
+| Fix a count | Anyone | `CMD-COUNT` → any box of the net → total quantity (racks + second floor). If it is different from the system, tap a reason. |
+| Undo my last scan | The same worker | **Undo my last scan** button (or `CMD-UNDO`) within 15 minutes → tap why. Only your own last scan on that device. |
+| Box count (opening count, day 14) | Anyone | **Count boxes** (or `CMD-BOXCOUNT`) → shelf label → how many in that box (3-bin box: one number per color). `2F` → size + color → number. Then the manager opens **Stock → Box count → Review and apply**, picks a reason and presses **Apply**. |
 
 If nets are rejected at a step, type the good count and press Enter right after the scan.
 
@@ -44,7 +46,7 @@ If nets are rejected at a step, type the good count and press Enter right after 
 * **Shelf labels** 50 × 25 mm: one per box slot, stuck on the shelf edge and never moved. Code like `AR-C1-R3`, with size, color (or BLACK | BROWN | GREY for a 3-bin box) and PICK or BACKUP (striped).
 * **Side signs** A4: side letter and size range, one at the end of each side.
 * **Worker badges** 50 × 25 mm: `EMP-01` …
-* **Command sheet** 50 × 25 mm: OUT, FBA, SWAP, REFILL, EMPTY, RETURN, DAMAGED, COUNT, CANCEL, QTY-1/5/10/20/25 and the `2F` location.
+* **Command sheet** 50 × 25 mm: OUT, FBA, SWAP, REFILL, EMPTY, RETURN, DAMAGED, COUNT, CANCEL, UNDO, BOX COUNT, QTY-1/5/10/20/25 and the `2F` location.
 
 Print from **Setup labels**. In the print dialog choose the thermal printer, set the paper size to the label size and margins to none (side signs: A4 landscape).
 

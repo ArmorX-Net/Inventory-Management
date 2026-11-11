@@ -9,16 +9,20 @@
 
 // Change this to your own secret word, and type the same word in the app's Settings.
 var ACCESS_KEY = 'change-me';
+// Version 4 (11 Nov 2026): undo the last scan, reasons on count changes, box count (opening count).
+var VERSION = 4;
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
-  Scans:   ['Event ID', 'Time', 'Type', 'Worker ID', 'Worker', 'Batch', 'Net ID', 'Net', 'Qty', 'Rejected', 'Box', 'Note', 'Station'],
+  Scans:   ['Event ID', 'Time', 'Type', 'Worker ID', 'Worker', 'Batch', 'Net ID', 'Net', 'Qty', 'Rejected', 'Box', 'Note', 'Station', 'Reason'],
   Batches: ['Batch', 'Net ID', 'Net', 'Qty', 'Good', 'Current step', 'Step no', 'Created', 'Created by', 'Box',
             'Cutting by', 'Cutting at', 'Base by', 'Base at', 'Sides by', 'Sides at', 'Finish by', 'Finish at', 'Packing by', 'Packing at', 'Rack-in by', 'Rack-in at', 'Rejected total'],
   Stock:   ['Net ID', 'Net', 'On hand', 'Last change', 'Last change at'],
   Workers: ['Badge', 'Name', 'Main step'],
-  Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By']
+  Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By'],
+  Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID']
 };
+// Counts: box count in progress (scan the shelf, type the number). Rows leave this tab when the manager presses Apply in the app.
 // Layout v7: every box slot on racks A-C. "empty" boxes are on the refill list; Made drives first made, first shipped.
 
 function setup() {
@@ -28,6 +32,8 @@ function setup() {
     if (sh.getLastRow() === 0) {
       sh.getRange(1, 1, 1, TABS[name].length).setValues([TABS[name]]).setFontWeight('bold');
       sh.setFrozenRows(1);
+    } else if (sh.getLastColumn() < TABS[name].length) { // a newer version added columns: add their titles
+      sh.getRange(1, 1, 1, TABS[name].length).setValues([TABS[name]]).setFontWeight('bold');
     }
   });
 }
@@ -76,7 +82,8 @@ function doGet(e) {
   if (nets && nets.getLastRow() > 1) nets.getRange(2, 1, nets.getLastRow() - 1, 4).getValues().forEach(function (r) { if (r[0]) rates[r[0]] = Number(r[3]) || 0; });
   var boxes = {};
   rows_('Boxes').forEach(function (r) { if (r[0]) boxes[r[0]] = { state: r[1] || 'full', net: r[2] || '', wo: r[3] || '', made: iso_(r[4]) || null, at: iso_(r[5]), by: r[6] || '' }; });
-  return json_({ ok: true, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, at: new Date().toISOString() });
+  var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
+  return json_({ ok: true, v: VERSION, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, at: new Date().toISOString() });
 }
 function iso_(v) { return (v && typeof v.getTime === 'function') ? new Date(v.getTime()).toISOString() : (v ? String(v) : ''); }
 
@@ -111,7 +118,7 @@ function apply_(ev, station) {
     return;
   }
   sheet_('Scans').appendRow([ev.id, t, ev.type, ev.who || '', workerName_(ev.who), ev.wo || '', ev.net || '', ev.netName || '',
-    ev.qty == null ? '' : ev.qty, ev.rej || '', ev.loc || '', ev.note || '', station]);
+    ev.qty == null ? '' : ev.qty, ev.rej || '', ev.loc || '', ev.note || '', station, ev.reason || '']);
 
   if (ev.type === 'BATCH') {
     if (!findRow_('Batches', ev.wo)) {
@@ -154,6 +161,15 @@ function apply_(ev, station) {
     stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Return', t);
   } else if (ev.type === 'COUNT') {
     stock_(ev.net, ev.netName, Number(ev.qty), 'set', 'Count', t);
+  } else if (ev.type === 'UNDO') {
+    undo_(ev, t);
+  } else if (ev.type === 'BOXCOUNT') {
+    count_(ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id);
+  } else if (ev.type === 'BOXSET') {
+    box_(ev.loc, ev.state || 'full', ev.net, ev.wo, ev.made, t, ev.who);
+  } else if (ev.type === 'COUNTDONE') {
+    var keys = {}; (ev.keys || []).forEach(function (k) { keys[k] = true; });
+    deleteWhere_('Counts', function (r) { return keys[r[0] + '|' + r[1]]; });
   }
   // DAMAGED is only logged: damaged returns do not go back to stock.
 }
@@ -174,4 +190,51 @@ function box_(loc, state, net, wo, made, t, who) {
   var row = [loc, state, net || '', wo || '', made ? new Date(made) : '', t, workerName_(who)];
   if (b) sh.getRange(b.row, 1, 1, row.length).setValues([row]);
   else sh.appendRow(row);
+}
+
+// Undo: put back exactly what the undone scan changed. The app sends the old values.
+function undo_(ev, t) {
+  var o = ev.undoes ? findRow_('Scans', ev.undoes) : null;
+  if (o && String(o.values[11]).indexOf(' · UNDONE') < 0) sheet_('Scans').getRange(o.row, 12).setValue(String(o.values[11] || '') + ' · UNDONE');
+  var st = ev.stock || {};
+  Object.keys(st).forEach(function (id) { if (Number(st[id])) stock_(id, id === ev.net ? ev.netName : '', Number(st[id]), 'add', 'Undo', t); });
+  var bt = ev.batch;
+  if (bt && bt.wo) {
+    var b = findRow_('Batches', bt.wo);
+    if (b) {
+      var sh = sheet_('Batches'), s0 = Number(bt.stage);
+      sh.getRange(b.row, 5, 1, 3).setValues([[Number(bt.good), STAGES[s0], s0]]);
+      sh.getRange(b.row, 10).setValue(bt.loc || '');
+      for (var s = s0 + 1; s <= 6; s++) sh.getRange(b.row, 9 + s * 2, 1, 2).setValues([['', '']]);
+      if (Number(bt.rej)) sh.getRange(b.row, 23).setValue(Math.max(0, (Number(b.values[22]) || 0) - Number(bt.rej)));
+    }
+  }
+  var bx = ev.boxes || {};
+  Object.keys(bx).forEach(function (c) {
+    var r = bx[c];
+    if (r) box_(c, r.state || 'full', r.net, r.wo, r.made, t, ev.who);
+    else deleteWhere_('Boxes', function (row) { return String(row[0]) === c; });
+  });
+  var cs = ev.counts || {};
+  Object.keys(cs).forEach(function (k) {
+    var r = cs[k], p = k.split('|');
+    if (r) count_(p[0], p[1], '', r.qty, t, ev.who, ev.id);
+    else deleteWhere_('Counts', function (row) { return String(row[0]) === p[0] && String(row[1]) === p[1]; });
+  });
+}
+
+// Box count: one row per box + net (a 3-bin box has one row per color). A new count of the same box replaces the old one.
+function count_(box, net, name, qty, t, who, id) {
+  if (!box || !net) return;
+  var sh = sheet_('Counts'), r = rows_('Counts'), row = [box, net, name || '', Number(qty) || 0, t, workerName_(who), id || ''];
+  for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) {
+    if (!name) row[2] = r[i][2];
+    sh.getRange(i + 2, 1, 1, row.length).setValues([row]); return;
+  }
+  sh.appendRow(row);
+}
+
+function deleteWhere_(name, test) {
+  var sh = sheet_(name), r = rows_(name);
+  for (var i = r.length - 1; i >= 0; i--) if (test(r[i])) sh.deleteRow(i + 2);
 }

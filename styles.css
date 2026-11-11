@@ -185,6 +185,11 @@ body.cam-on{overflow:hidden}
 .act.on{background:var(--tag);border-color:var(--tag);color:#111}
 .act.ghost{background:transparent}
 @media (max-width:600px){.acts-g{grid-template-columns:repeat(2,1fr)}.act{min-height:52px}}
+#undoBar{margin-top:8px}
+.act.undo{width:100%;text-align:left;padding:8px 12px;border-style:dashed}
+.acts-g.reasons{grid-template-columns:repeat(3,1fr)}
+@media (max-width:600px){.acts-g.reasons{grid-template-columns:repeat(2,1fr)}}
+tr.undone td{text-decoration:line-through;opacity:.6}
 
 /* rack side signs: big side code + size range; 3 per A4 portrait page */
 .signs-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
