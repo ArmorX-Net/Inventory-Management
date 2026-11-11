@@ -1,5 +1,6 @@
-// ArmorX office sheet (mbventures.amazon@gmail.com). Settings fills these in; press Connect.
-// The access key is NOT stored in the code. Phones get it once from the setup link: <app link>#setup=<key>
+// ArmorX office sheet. Everyone signs in with their employee number and their own PIN (kept, hashed, in the
+// Workers tab of the sheet). The sheet script checks the sign-in on every read and write, so this public link
+// shows nothing without it. No PIN, password or key is stored in this code.
 var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn4t5Pquha2u15oRcCB0bfSFbx0Iy2UJpM2oXX32DMyGtihxMTZvzgJeFw/exec', key: '' };
 /* ArmorX Inventory — demo build.
    One batch label travels through every step. The USB scanner types the code and presses Enter,
@@ -72,6 +73,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     ev.id = ev.id || newId();
     ev.t = ev.t || now();
     if (ev.net && BY_ID[ev.net]) ev.netName = netLabel(BY_ID[ev.net]);
+    ev._t = S.auth ? S.auth.t : ''; // sent with the sign-in of the person who scanned it, even if the phone changes hands
     S.queue = S.queue || []; S.queue.push(ev); save(); setTimeout(flush, 50);
   }
   function netLabel(n) { return n.size + ' ' + n.color; }
@@ -322,7 +324,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewScan() {
     h('<h2>Scan station</h2><div class="station"><div class="scanbox">' +
       '<div class="who">Scanning as <span class="name" id="who">—</span><span class="muted small" id="whoRole"></span></div>' +
-      '<label class="me">I am <select id="meSel"><option value="">— pick your name —</option>' + S.workers.map(function (w) { return '<option value="' + esc(w.id) + '"' + (w.id === sess.emp ? ' selected' : '') + '>' + esc(w.name.replace(' (sample)', '')) + ' · ' + esc(w.role) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="small" style="color:#cfd6db">Not you? <a href="#" id="soLink" style="color:#fff">Sign out</a>, or scan your own badge and type your PIN.</div>' +
       '<div class="acts" id="acts"></div>' +
       '<button type="button" class="btn camBtn" id="camBtn">Scan with camera</button>' +
       '<div class="prompt" id="prompt"></div>' +
@@ -336,7 +338,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="small"><b>3 · Box label</b> (for rack-in and picking)</div><div class="sim" id="simL"></div>' +
       '<div class="small"><b>Commands</b></div><div class="sim" id="simC"></div>' +
       '<h3 style="margin-top:6px">How a batch moves</h3><ol class="small" style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px">' +
-      '<li>Scan your <b>badge</b> once. It stays until someone else scans theirs.</li>' +
+      '<li>You are signed in, so your name goes on every scan. Sharing a phone? Scan your <b>badge</b> and type your PIN.</li>' +
       '<li>Scan the <b>batch label</b>. The batch moves to the next step: Cut → Base → Sides → Finish → Pack, and your name is saved on that step.</li>' +
       '<li>If some nets were rejected, type the good count and press Enter (within the next scan).</li>' +
       '<li>After Pack, scan the batch, then <b>TOP</b> (top of racks) or an <b>empty</b> box on the rack. Stock goes up.</li>' +
@@ -348,7 +350,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
-    document.getElementById('meSel').onchange = function () { var v = this.value || null; sess.emp = v; S.settings.me = v; sess.mode = null; sess.await = null; save(); if (v) fb('Hello ' + esc(wname(v)) + '.', 'ok'); paint(); };
+    document.getElementById('soLink').onclick = function (e) { e.preventDefault(); e.stopPropagation(); signOut(); };
     document.getElementById('camBtn').onclick = function () { if (window.ArmorXCam) window.ArmorXCam.open(handle); };
     document.getElementById('acts').onclick = function (e) { var b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); var a = b.dataset.act;
       if (a === 'CANCEL' || a === sess.mode) handle('CMD-CANCEL'); else handle('CMD-' + a); if (!TOUCH) refocus(); };
@@ -359,7 +361,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     sim('simB', Object.values(S.batches).filter(function (b) { return b.stage < 6; }).slice(-6).map(function (b) { return [b.id, SHORT[b.stage + 1] + ' next']; }));
     var picks = ['DN-210x100-BK', 'DN-210x100-GR', 'DN-200x100-BK', 'DN-250x150-GR', 'DN-210x95-BR', 'DN-205x90-GR', 'DN-210x100-BR'].map(function (id) { return [BY_ID[id].pick, BY_ID[id].size + ' ' + BY_ID[id].color]; }).concat([[FLOOR2, 'top of racks']]);
     sim('simL', picks);
-    sim('simC', [['CMD-OUT'], ['CMD-FBA'], ['CMD-SWAP'], ['CMD-REFILL'], ['CMD-EMPTY'], ['CMD-RETURN'], ['CMD-COUNT'], ['CMD-BOXCOUNT'], ['CMD-UNDO'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]);
+    sim('simC', [['CMD-OUT'], ['CMD-FBA'], ['CMD-SWAP'], ['CMD-REFILL'], ['CMD-EMPTY'], ['CMD-RETURN']].concat(can('Manager') ? [['CMD-COUNT']] : []).concat([['CMD-BOXCOUNT'], ['CMD-UNDO'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]));
     app.querySelectorAll('.sim button').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); handle(b.dataset.c); if (!TOUCH) refocus(); }; });
     paint(); if (!TOUCH) inp.focus();
   }
@@ -368,7 +370,6 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function paint() {
     var w = worker(sess.emp);
     var who = document.getElementById('who'); if (!who) return;
-    var ms = document.getElementById('meSel'); if (ms) ms.value = sess.emp || '';
     who.textContent = w ? w.name : 'nobody yet'; document.getElementById('whoRole').textContent = w ? '· ' + w.role : '';
     var p = 'Scan your worker badge';
     if (sess.emp) {
@@ -385,7 +386,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     document.getElementById('prompt').innerHTML = p;
     var acts = document.getElementById('acts');
     if (acts) acts.innerHTML = sess.emp ? '<div class="acts-h">' + (sess.mode ? 'Doing: <b>' + esc(ACTS[sess.mode]) + '</b> · tap again to stop' : 'What are you doing? Tap one, or just scan a box and the app will ask') + '</div><div class="acts-g">' +
-      ACT_ORDER.map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
+      actList().map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
     var qb = document.getElementById('qbar');
     if (qb) qb.innerHTML = sess.await === 'qty' ? '<div class="qbtns">' + [1, 2, 3, 4, 5, 10, 20].map(function (q) { return '<button type="button" class="act" data-q="' + q + '">' + q + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>'
       : sess.await === 'bcqty' ? '<div class="qbtns">' + boxQtyButtons().map(function (q) { return '<button type="button" class="act" data-q="' + q[0] + '">' + esc(q[1]) + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>' : '';
@@ -401,6 +402,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count', BOXCOUNT: 'Count boxes' };
   var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT', 'BOXCOUNT'];
+  function actList() { return ACT_ORDER.filter(function (a) { return a !== 'COUNT' || can('Manager'); }); } // COUNT sets stock: managers only
   function boxActions(code, box, list) { // scan first, choose after: the actions that make sense for this box
     if (code === FLOOR2 || !box) return ['OUT', 'FBA', 'RETURN', 'COUNT'];
     var empty = isEmpty(code), n = list[0];
@@ -414,7 +416,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (window.ArmorXCam) window.ArmorXCam.close();
     var info = list.length > 1 ? list[0].size + ' (3 bins)' : netLabel(list[0]);
     fb('<code>' + esc(code) + '</code> · ' + (box.role === 'pick' ? 'PICK box' : 'BACKUP box') + ' · ' + esc(info) + (list.length === 1 ? ' · ' + onHand(list[0].id) + ' in total' : '') + (r ? ' · ' + (r.state === 'empty' ? '<b>marked empty</b>' : 'made ' + esc(fmtD(r.made))) : '') + '. <b>What are you doing?</b>', 'ok');
-    adj.innerHTML = '<div class="acts-g">' + boxActions(code, box, list).map(function (a, i) { return '<button type="button" class="act' + (i === 0 ? ' on' : '') + '" data-do="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>';
+    adj.innerHTML = '<div class="acts-g">' + boxActions(code, box, list).filter(function (a) { return actList().indexOf(a) >= 0; }).map(function (a, i) { return '<button type="button" class="act' + (i === 0 ? ' on' : '') + '" data-do="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>';
     adj.querySelectorAll('[data-do]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); adj.innerHTML = ''; handle('CMD-' + b.dataset.do); scanBox(code); if (!TOUCH) refocus(); }; });
   }
   function handle(raw) {
@@ -423,13 +425,15 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var adj = document.getElementById('adjust'); if (adj && !/^\d+$/.test(code)) adj.innerHTML = '';
     if (code === '2F') code = FLOOR2; // labels printed before 11 Nov 2026
     if (/^EMP-\d+$/.test(code)) {
-      var w = worker(code); if (!w) { fb('Unknown badge <b>' + esc(code) + '</b>. ' + (sheetOn() ? 'Add it to the Workers tab of the Google Sheet.' : 'Add it in Settings.'), 'bad'); return; }
-      sess.emp = code; S.settings.me = code; save(); sess.mode = null; sess.await = null; fb('Hello ' + esc(w.name) + '.', 'ok'); paint(); return;
+      var w = worker(code); if (!w) { fb('Unknown badge <b>' + esc(code) + '</b>. Ask the admin to add it on the People page.', 'bad'); return; }
+      if (code === sess.emp) { sess.mode = null; sess.await = null; fb('Hello ' + esc(w.name) + '.', 'ok'); paint(); return; }
+      askSwitch(w); return; // someone else's badge: they type their own PIN, so nobody can scan in another person's name
     }
     if (code === 'CMD-CANCEL') { sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; sess.bc = null; fb('Cleared.', 'ok'); paint(); return; }
     if (!sess.emp) { fb('Scan your worker badge first, so the system knows who did this.', 'bad'); return; }
     if (code === 'CMD-UNDO') { startUndo(); return; }
     var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY|BOXCOUNT)$/.exec(code);
+    if (m && m[1] === 'COUNT' && !can('Manager')) { fb('Only a manager can change a count. To count boxes, tap <b>Count boxes</b>.', 'bad'); return; }
     if (m && m[1] === 'BOXCOUNT' && !sheetNew()) { fb(OLD_SHEET + 'use the count sheet on the Stock page.', 'bad'); return; }
     if (m) { sess.mode = m[1]; sess.await = null; sess.wo = null; sess.bc = null; fb(esc(m[1] === 'BOXCOUNT' ? 'BOX COUNT' : m[1]) + ' mode on. ' + esc(MODE_HELP[m[1]]) + (m[1] === 'BOXCOUNT' ? ' ' + countProgressText() : ''), 'ok'); paint(); return; }
     if (/reason$/.test(sess.await || '')) { fb('Tap a reason first, or scan CANCEL.', 'bad'); return; }
@@ -827,7 +831,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   function applyBoxCount(ready, why, ndiff) {
     var msg = document.getElementById('bcMsg'), who = sess.emp || S.settings.me;
-    if (!who) { msg.textContent = 'Pick your name on the Scan station first, so the counts carry your name.'; return; }
+    if (!who) { msg.textContent = 'Sign in first, so the counts carry your name.'; return; }
     if (sheetOn() && !sheetNew()) { msg.textContent = OLD_SHEET + 'use the count sheet.'; return; }
     if (ndiff && why === null) { msg.textContent = ndiff + ' nets are different from the system. Pick a reason first.'; return; }
     var used = [], boxes = {};
@@ -965,49 +969,149 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     };
   }
 
-  // ---------- settings ----------
+  // ---------- settings (admin) ----------
   function viewSettings() {
-    h('<h2>Settings</h2><div class="card"><h3>Workers</h3><div class="small muted">Each worker gets a badge code. Print badges from Setup labels.</div><div class="tablewrap"><table><thead><tr><th>Badge</th><th>Name</th><th>Main step</th><th></th></tr></thead><tbody id="wt"></tbody></table></div>' +
-      '<form id="wAdd" class="row" style="align-items:flex-end"><label class="f">Name<input id="wName" required></label><label class="f">Main step<select id="wRole">' + STAGES.slice(1, 6).concat(['Racks & dispatch']).map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary">Add worker</button></form></div>' +
-      '<div class="card"><h3>Google Sheet (shared data)</h3><div class="small muted">Connect a Google Sheet so every scan is saved there and every computer sees the same stock. Setup steps are in <code>google-sheet/SETUP.md</code>. Once connected, the sheet is the master copy.</div>' +
+    h('<h2>Settings</h2>' +
+      '<div class="card"><h3>Google Sheet (shared data)</h3><div class="small muted">Every scan is saved in the ArmorX Google Sheet. People, levels and PINs are on the <a href="#people">People</a> page. Setup steps are in <code>google-sheet/SETUP.md</code>.</div>' +
       '<form id="gsForm" class="row" style="align-items:flex-end"><label class="f" style="flex:1 1 360px">Web app link (ends with /exec)<input id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(S.settings.sheetUrl || ARMORX_SHEET.url) + '"></label>' +
-      '<label class="f">Access key<input id="gsKey" value="' + esc(S.settings.sheetKey || ARMORX_SHEET.key) + '"></label><label class="f">This computer<input id="gsStation" placeholder="e.g. Stitching PC" value="' + esc(S.settings.station || '') + '"></label>' +
-      '<button class="btn primary">Connect</button>' + (sheetOn() ? '<button type="button" class="btn" id="gsOff">Disconnect</button><button type="button" class="btn" id="gsWorkers">Send workers to sheet</button>' : '') + '</form><div class="small" id="gsMsg">' + esc(syncText()) + '</div></div>' +
-      '<div class="card"><h3>Data</h3><div class="small muted">Without a Google Sheet, everything stays in this browser. Back it up as a file, or start fresh before going live.</div><div class="row"><button class="btn" id="bk">Download backup</button><label class="btn">Restore backup<input type="file" id="rs" accept=".json" hidden></label><button class="btn" id="demo">Reload sample data</button><button class="btn danger" id="clr">Start fresh (empty)</button></div><div id="confirmBox"></div></div>');
-    function drawW() {
-      document.getElementById('wt').innerHTML = S.workers.map(function (w, i) { return '<tr><td><code>' + esc(w.id) + '</code></td><td><input data-i="' + i + '" class="wn" value="' + esc(w.name) + '" style="border:1px solid var(--line);padding:4px 6px;border-radius:2px;background:var(--surface);color:var(--ink)"></td><td>' + esc(w.role) + '</td><td>' + (S.workers.length > 1 ? '<button class="btn" data-del="' + i + '">Remove</button>' : '') + '</td></tr>'; }).join('');
-      app.querySelectorAll('.wn').forEach(function (x) { x.onchange = function () { var w = S.workers[x.dataset.i]; w.name = x.value.trim() || w.name; save(); queue({ type: 'WORKER', who: w.id, name: w.name, role: w.role }); toast('Saved.'); }; });
-      app.querySelectorAll('[data-del]').forEach(function (x) { x.onclick = function () { S.workers.splice(+x.dataset.del, 1); save(); drawW(); }; });
-    }
-    drawW();
-    document.getElementById('wAdd').onsubmit = function (e) {
-      e.preventDefault(); var max = S.workers.reduce(function (a, w) { return Math.max(a, parseInt(w.id.slice(4), 10) || 0); }, 0);
-      var nw = { id: 'EMP-' + String(max + 1).padStart(2, '0'), name: document.getElementById('wName').value.trim(), role: document.getElementById('wRole').value }; S.workers.push(nw); save(); queue({ type: 'WORKER', who: nw.id, name: nw.name, role: nw.role }); drawW(); document.getElementById('wName').value = '';
-    };
+      '<label class="f">This device<input id="gsStation" placeholder="e.g. Stitching PC" value="' + esc(S.settings.station || '') + '"></label>' +
+      '<button class="btn primary">Save</button></form><div class="small" id="gsMsg">' + esc(syncText()) + '</div></div>' +
+      '<div class="card"><h3>Data on this device</h3><div class="small muted">The Google Sheet is the master copy. A backup file is a copy of what this device has.</div><div class="row"><button class="btn" id="bk">Download backup</button></div></div>');
     document.getElementById('gsForm').onsubmit = function (e) {
       e.preventDefault();
-      var u = document.getElementById('gsUrl').value.trim(), k = document.getElementById('gsKey').value.trim();
+      var u = document.getElementById('gsUrl').value.trim();
       S.settings.station = document.getElementById('gsStation').value.trim();
       if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(u)) { document.getElementById('gsMsg').textContent = 'The link should start with https://script.google.com/macros/s/ and end with /exec.'; return; }
-      document.getElementById('gsMsg').textContent = 'Checking the sheet…';
-      fetch(u + '?key=' + encodeURIComponent(k)).then(function (r) { return r.json(); }).then(function (d) {
-        if (!d.ok) throw new Error(d.error || 'The sheet said no');
-        S.settings.sheetUrl = u; S.settings.sheetKey = k; S.demo = false; S.queue = [];
-        applyRemote(d); save(); toast('Connected to the Google Sheet.'); route();
-      }).catch(function (err) { document.getElementById('gsMsg').textContent = 'Could not connect: ' + err.message + '. Check the link and access key, and that the web app is shared with "Anyone".'; });
+      S.settings.sheetUrl = u; save(); document.getElementById('gsMsg').textContent = 'Saved. Checking the sheet…';
+      pull().then(function () { var m = document.getElementById('gsMsg'); if (m) m.textContent = syncText(); });
     };
-    var off = document.getElementById('gsOff'); if (off) off.onclick = function () { S.settings.sheetUrl = ''; save(); toast('Disconnected. Data now stays in this browser.'); route(); };
-    var gw = document.getElementById('gsWorkers'); if (gw) gw.onclick = function () { S.workers.forEach(function (w) { queue({ type: 'WORKER', who: w.id, name: w.name, role: w.role }); }); toast('Sending ' + S.workers.length + ' workers to the sheet.'); };
-    document.getElementById('bk').onclick = function () { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' })); a.download = 'armorx-inventory-backup.json'; a.click(); };
-    document.getElementById('rs').onchange = function () { var f = this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { try { var d = JSON.parse(r.result); if (!d.stock || !d.batches) throw 0; S = d; S.counts = S.counts || {}; S.boxes = S.boxes || {}; save(); toast('Backup restored.'); route(); } catch (e) { toast('That file is not an ArmorX backup.'); } }; r.readAsText(f); };
-    function ask(msg, fn) {
-      var el = document.getElementById('confirmBox');
-      el.innerHTML = '<div class="note row" style="align-items:center;justify-content:space-between"><span>' + msg + '</span><span class="row"><button class="btn danger" id="yes">Yes, do it</button><button class="btn" id="no">Keep my data</button></span></div>';
-      document.getElementById('yes').onclick = function () { fn(); el.innerHTML = ''; };
-      document.getElementById('no').onclick = function () { el.innerHTML = ''; };
+    document.getElementById('bk').onclick = function () { var a = document.createElement('a'); var c = clone(S); delete c.auth; a.href = URL.createObjectURL(new Blob([JSON.stringify(c, null, 1)], { type: 'application/json' })); a.download = 'armorx-inventory-backup.json'; a.click(); };
+  }
+
+  // ---------- people (admin): who can sign in, their level, PIN ----------
+  var LEVEL_HELP = { Worker: 'scan, pick, refill, count boxes', Manager: '+ dashboard, stock, counts, batches, labels, scan log', Admin: '+ people, PINs, settings' };
+  function viewPeople() {
+    h('<h2>People</h2><div class="card"><div class="small muted">Everyone signs in with their employee number and their own 4-digit PIN. ' +
+      'Levels: <b>Worker</b> ' + esc(LEVEL_HELP.Worker) + '. <b>Manager</b> ' + esc(LEVEL_HELP.Manager) + '. <b>Admin</b> ' + esc(LEVEL_HELP.Admin) + '. ' +
+      'Someone left? Untick <b>Active</b>: they are signed out on every phone at once. A new PIN also signs that person out everywhere. ' +
+      'You can do the same in the Workers tab of the Google Sheet (type the PIN in the New PIN column).</div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Badge</th><th>Name</th><th>Main step</th><th>Level</th><th>Active</th><th>PIN</th><th>Last sign-in</th></tr></thead><tbody id="pt"></tbody></table></div><div class="small" id="pMsg"></div></div>' +
+      '<div class="card"><h3>Add a person</h3><form id="pAdd" class="row" style="align-items:flex-end"><label class="f">Employee number<input id="paId" placeholder="EMP-79" required></label><label class="f">Name<input id="paName" required></label>' +
+      '<label class="f">Main step<input id="paRole" placeholder="e.g. Stitching"></label><label class="f">Level<select id="paLvl"><option>Worker</option><option>Manager</option><option>Admin</option></select></label>' +
+      '<label class="f">PIN (4 digits)<input id="paPin" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label><button class="btn primary">Add</button></form></div>');
+    var msg = document.getElementById('pMsg');
+    function draw() {
+      var list = S.workers.slice().sort(function (a, b) { return (parseInt(String(a.id).slice(4), 10) || 0) - (parseInt(String(b.id).slice(4), 10) || 0); });
+      document.getElementById('pt').innerHTML = list.map(function (w) {
+        var id = esc(w.id);
+        return '<tr' + (w.active === false ? ' class="muted"' : '') + '><td><code>' + id + '</code></td>' +
+          '<td><input class="pin-in" data-id="' + id + '" data-f="name" value="' + esc(w.name) + '"></td>' +
+          '<td><input class="pin-in" data-id="' + id + '" data-f="role" value="' + esc(w.role || '') + '"></td>' +
+          '<td><select data-id="' + id + '" data-f="level">' + ['Worker', 'Manager', 'Admin'].map(function (l) { return '<option' + (w.level === l ? ' selected' : '') + '>' + l + '</option>'; }).join('') + '</select></td>' +
+          '<td><input type="checkbox" data-id="' + id + '" data-f="active"' + (w.active === false ? '' : ' checked') + ' aria-label="Active"></td>' +
+          '<td>' + (w.locked ? '<b>Locked</b> <button class="btn" data-unlock="' + id + '">Unlock</button> ' : '') + (w.pin ? 'set' : '<b>not set</b>') + ' <button class="btn" data-pin="' + id + '">New PIN</button></td>' +
+          '<td class="muted small">' + (w.last ? fmtT(w.last) : 'never') + '</td></tr>';
+      }).join('');
+      app.querySelectorAll('#pt [data-f]').forEach(function (x) { x.onchange = function () {
+        var o = { id: x.dataset.id }; o[x.dataset.f] = x.type === 'checkbox' ? x.checked : x.value.trim(); send(o);
+      }; });
+      app.querySelectorAll('[data-unlock]').forEach(function (x) { x.onclick = function () { send({ id: x.dataset.unlock, unlock: true }); }; });
+      app.querySelectorAll('[data-pin]').forEach(function (x) { x.onclick = function () {
+        var td = x.parentNode; td.innerHTML = '<input class="pin-in" inputmode="numeric" maxlength="4" placeholder="4 digits" style="width:6em"> <button class="btn primary">Save</button>';
+        var inp = td.querySelector('input'); inp.focus();
+        td.querySelector('button').onclick = function () { if (!/^\d{4}$/.test(inp.value)) { toast('PIN must be 4 digits.'); return; } send({ id: x.dataset.pin, pin: inp.value }); };
+      }; });
     }
-    document.getElementById('demo').onclick = function () { ask('Replace everything with the sample data?', function () { var ks = S.settings; S = blank(); S.settings = ks; seedDemo(); toast('Sample data loaded.'); route(); }); };
-    document.getElementById('clr').onclick = function () { ask('Delete all batches, stock and scans, and start with an empty system? Workers are kept.', function () { var w = S.workers, ks = S.settings; S = blank(); S.settings = ks; S.workers = w.map(function (x) { return { id: x.id, name: x.name.replace(' (sample)', ''), role: x.role }; }); save(); toast('Empty system ready. Count your stock with COUNT scans.'); route(); }); };
+    function send(person, done) {
+      msg.textContent = 'Saving…';
+      sheetCall({ action: 'admin', person: person }).then(function (d) {
+        if (!d.ok) { msg.textContent = d.error || 'Not saved.'; toast(d.error || 'Not saved.'); pull().then(draw); return; }
+        msg.textContent = 'Saved.'; toast('Saved.'); if (done) done(); pull().then(draw);
+      }).catch(function () { msg.textContent = 'No internet: not saved. Try again.'; });
+    }
+    draw();
+    if (sheetOn()) pull().then(function (c) { if (c && location.hash === '#people') draw(); });
+    document.getElementById('pAdd').onsubmit = function (e) {
+      e.preventDefault();
+      var pin = document.getElementById('paPin').value;
+      if (!/^\d{4}$/.test(pin)) { toast('PIN must be 4 digits.'); return; }
+      send({ id: document.getElementById('paId').value.trim(), name: document.getElementById('paName').value.trim(), role: document.getElementById('paRole').value.trim(), level: document.getElementById('paLvl').value, pin: pin },
+        function () { document.getElementById('pAdd').reset(); });
+    };
+  }
+
+  // ---------- sign-in ----------
+  function signedIn() { return !!(S.auth && S.auth.t && Number(S.auth.exp) > Date.now()); }
+  var RANK = { Worker: 0, Manager: 1, Admin: 2 };
+  function can(need) { return signedIn() && (RANK[S.auth.level] || 0) >= (RANK[need] || 0); }
+  function sheetUrl() { return (S.settings && S.settings.sheetUrl) || ARMORX_SHEET.url; }
+  function sheetCall(body) {
+    body.t = S.auth ? S.auth.t : '';
+    return fetch(sheetUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) }).then(function (r) { return r.json(); });
+  }
+  function login(badge, pin) { // resolves with { ok, error } and signs this device in on success
+    return fetch(sheetUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'login', badge: badge, pin: pin }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) return { ok: false, error: /access key/i.test(d.error || '') ? 'The Google Sheet script is an older version. Ask the admin to paste the new google-sheet/Code.gs and deploy a new version.' : (d.error || 'Could not sign in.') };
+        var url = sheetUrl();
+        if (S.demo || !sheetOn()) { var keep = S.settings || {}, q = S.queue; S = blank(); S.workers = []; S.settings = keep; S.queue = q || []; }
+        S.settings.sheetUrl = url; delete S.settings.sheetKey; S.demo = false;
+        if (!S.settings.station) S.settings.station = TOUCH ? 'Phone' : 'Computer';
+        S.auth = { t: d.token, exp: d.exp, id: d.me.id, name: d.me.name, level: d.me.level };
+        if (!worker(d.me.id)) S.workers.push({ id: d.me.id, name: d.me.name, role: '' });
+        S.settings.me = d.me.id; sess.emp = d.me.id; sess.mode = null; sess.await = null; S.undo = null;
+        save();
+        return pull().then(function () { return { ok: true }; });
+      })
+      .catch(function () { return { ok: false, error: 'No internet. Connect to Wi-Fi or mobile data and try again.' }; });
+  }
+  function signOut(why) {
+    if (window.ArmorXCam) window.ArmorXCam.close();
+    S.auth = null; S.settings.me = null; sess.emp = null; sess.mode = null; sess.await = null; S.undo = null; save();
+    if (location.hash !== '#signin') history.replaceState(null, '', location.pathname + location.search + '#signin');
+    route(); if (why) setTimeout(function () { var m = document.getElementById('siMsg'); if (m) m.textContent = why; }, 0);
+  }
+  function viewSignIn() {
+    h('<div class="signin card"><h2>Sign in</h2><div class="small muted">ArmorX Inventory is for MB Ventures staff only.</div>' +
+      '<form id="siForm" class="signin-f"><label class="f">Employee number<input id="siId" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="EMP-78 or 78" required></label>' +
+      '<button type="button" class="btn" id="siCam">Scan my badge</button>' +
+      '<label class="f">PIN<input id="siPin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="4" pattern="\\d{4}" placeholder="4 digits" required></label>' +
+      '<button class="btn primary" id="siGo">Sign in</button><div class="small" id="siMsg" role="status"></div></form>' +
+      '<div class="small muted">This phone stays signed in for 30 days. No PIN yet, or locked out? Ask your manager.</div></div>');
+    var id = document.getElementById('siId'), pin = document.getElementById('siPin'), m = document.getElementById('siMsg');
+    if (S.settings && S.settings.lastBadge) { id.value = S.settings.lastBadge; pin.focus(); } else id.focus();
+    id.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); pin.focus(); } }); // USB scanner types the badge and presses Enter
+    document.getElementById('siCam').onclick = function () { if (window.ArmorXCam) window.ArmorXCam.open(function (code) { if (/^EMP-\d+$/.test(code)) { id.value = code; window.ArmorXCam.close(); pin.focus(); } }); };
+    document.getElementById('siForm').onsubmit = function (e) {
+      e.preventDefault();
+      if (!/^\d{4}$/.test(pin.value)) { m.textContent = 'The PIN is 4 digits.'; return; }
+      var go = document.getElementById('siGo'); go.disabled = true; m.textContent = 'Checking…';
+      login(id.value.trim(), pin.value).then(function (r) {
+        go.disabled = false; pin.value = '';
+        if (!r.ok) { m.textContent = r.error; pin.focus(); return; }
+        S.settings.lastBadge = S.auth.id; save();
+        toast('Hello ' + S.auth.name + '.');
+        location.hash = TOUCH || !can('Manager') ? '#scan' : '#dashboard'; route();
+      });
+    };
+  }
+  function askSwitch(w) { // shared phone: another person scans their badge and types their own PIN
+    var adj = document.getElementById('adjust'); if (!adj) return;
+    if (!sheetOn()) { fb('Sign out first, then sign in as ' + esc(w.name) + '.', 'bad'); return; }
+    if (window.ArmorXCam) window.ArmorXCam.close();
+    fb('<b>' + esc(w.name) + '</b>, type your PIN to scan as you.', 'warn');
+    adj.innerHTML = '<div class="qtyrow"><input id="swPin" type="password" inputmode="numeric" maxlength="4" placeholder="PIN" class="pin-in" style="width:7em;font-size:1.2rem"><button type="button" class="btn primary" id="swOk">Switch</button><button type="button" class="btn" id="swNo">Cancel</button></div>';
+    var p = document.getElementById('swPin'); p.focus();
+    function go(e) {
+      if (e) e.stopPropagation();
+      if (!/^\d{4}$/.test(p.value)) { toast('The PIN is 4 digits.'); return; }
+      fb('Checking…', 'ok');
+      login(w.id, p.value).then(function (r) { adj.innerHTML = ''; if (!r.ok) { fb(esc(r.error), 'bad'); return; } route(); fb('Hello ' + esc(S.auth.name) + '.', 'ok'); });
+    }
+    document.getElementById('swOk').onclick = go; p.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+    p.onclick = function (e) { e.stopPropagation(); };
+    document.getElementById('swNo').onclick = function (e) { e.stopPropagation(); adj.innerHTML = ''; fb('Still scanning as ' + esc(wname(sess.emp)) + '.', 'ok'); };
   }
 
   // ---------- Google Sheet sync ----------
@@ -1021,23 +1125,33 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   function paintSync() {
     var pill = document.getElementById('demoPill'); if (!pill) return;
+    if (!signedIn()) { pill.hidden = true; return; }
     if (sheetOn()) { pill.hidden = false; var w = (S.queue || []).length; pill.textContent = syncState.err ? 'SHEET OFFLINE · ' + w + ' waiting' : (w ? 'SAVING · ' + w + ' waiting' : 'SHEET · synced'); pill.style.background = syncState.err ? 'var(--bad)' : ''; pill.style.color = syncState.err ? '#fff' : ''; }
     else { pill.hidden = !S.demo; pill.textContent = 'DEMO · data stays in this browser'; pill.style.background = ''; pill.style.color = ''; }
   }
   function flush() {
-    if (!sheetOn() || syncState.busy || !(S.queue || []).length) { paintSync(); return Promise.resolve(); }
+    if (!sheetOn() || !signedIn() || syncState.busy || !(S.queue || []).length) { paintSync(); return Promise.resolve(); }
     syncState.busy = true;
-    var batch = S.queue.slice(0, 50);
+    // Scans go with the sign-in of the person who made them; one group per call.
+    var tok = S.queue[0]._t || (S.auth ? S.auth.t : '');
+    var batch = S.queue.filter(function (ev) { return (ev._t || tok) === tok; }).slice(0, 50).map(function (ev) { var c = Object.assign({}, ev); delete c._t; return c; });
     // text/plain keeps this a "simple" request, so Google Apps Script accepts it without a proxy.
-    return fetch(S.settings.sheetUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: S.settings.sheetKey, station: S.settings.station || '', events: batch }) })
+    return fetch(S.settings.sheetUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ t: tok, station: S.settings.station || '', events: batch }) })
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        if (!d.ok && d.auth) {
+          if (S.auth && tok !== S.auth.t) { // that person's sign-in ended: send their scans with the current sign-in, keeping their name in the note
+            S.queue.forEach(function (ev) { if (ev._t === tok) { ev._t = S.auth.t; ev.note = (ev.note || '') + ' · scanned by ' + wname(ev.who); } }); save(); throw new Error('retry');
+          }
+          signOut('Your sign-in has ended. Please sign in again.'); throw new Error('signed out');
+        }
         if (!d.ok) throw new Error(d.error || 'save failed');
         var ok = {}; (d.saved || []).forEach(function (id) { ok[id] = 1; });
         S.queue = S.queue.filter(function (ev) { return !ok[ev.id]; }); syncState.err = null; save();
+        if ((d.refused || []).length) toast('Not saved: ' + d.refused.map(function (x) { return x.why; }).join(' '));
       })
-      .catch(function (err) { syncState.err = err.message || 'offline'; })
-      .then(function () { syncState.busy = false; paintSync(); if ((S.queue || []).length && !syncState.err) return flush(); });
+      .catch(function (err) { syncState.err = err.message === 'retry' ? null : (err.message || 'offline'); })
+      .then(function () { syncState.busy = false; paintSync(); if ((S.queue || []).length && !syncState.err && signedIn()) return flush(); });
   }
   function applyRemote(d) {
     S.stock = d.stock || {};
@@ -1055,15 +1169,20 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (d.boxes && typeof d.boxes === 'object') { S.boxes = d.boxes; S.layout = window.LAYOUT_VERSION; }
     if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
     S.sheetV = Number(d.v) || 0;
+    if (d.me && S.auth && d.me.id === S.auth.id) { S.auth.name = d.me.name; S.auth.level = d.me.level; } // a level change by the admin shows at once
     syncState.at = d.at || now(); syncState.err = null;
   }
   function pull() {
-    if (!sheetOn() || syncState.busy) return Promise.resolve(false);
+    if (!sheetOn() || !signedIn() || syncState.busy) return Promise.resolve(false);
     return flush().then(function () {
-      if ((S.queue || []).length) return false; // never overwrite scans that are not saved yet
-      return fetch(S.settings.sheetUrl + '?key=' + encodeURIComponent(S.settings.sheetKey || ''))
+      if ((S.queue || []).length || !signedIn()) return false; // never overwrite scans that are not saved yet
+      return fetch(S.settings.sheetUrl + '?t=' + encodeURIComponent(S.auth.t))
         .then(function (r) { return r.json(); })
-        .then(function (d) { if (!d.ok) throw new Error(d.error || 'read failed'); applyRemote(d); save(); return true; })
+        .then(function (d) {
+          if (!d.ok && d.auth) { signOut('Your sign-in has ended. Please sign in again.'); return false; }
+          if (!d.ok) throw new Error(/access key/i.test(d.error || '') ? 'sheet script is older than version 5' : (d.error || 'read failed'));
+          var lv = S.auth.level; applyRemote(d); save(); if (S.auth.level !== lv) paintNav(); return true;
+        })
         .catch(function (err) { syncState.err = err.message || 'offline'; return false; });
     }).then(function (changed) { paintSync(); return changed; });
   }
@@ -1075,28 +1194,33 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }, 20000);
 
   // ---------- router ----------
-  var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, log: viewLog, settings: viewSettings };
+  var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, log: viewLog, people: viewPeople, settings: viewSettings };
+  // Who sees which page. Floor work (scan, pick, refill, rack map) is open to everyone: staff rotate.
+  var NEED = { dashboard: 'Manager', batches: 'Manager', stock: 'Manager', print: 'Manager', log: 'Manager', people: 'Admin', settings: 'Admin' };
+  function paintNav() {
+    var on = signedIn();
+    document.getElementById('tabs').hidden = !on;
+    document.querySelectorAll('#tabs a').forEach(function (a) { a.hidden = !can(NEED[a.getAttribute('href').slice(1)] || 'Worker'); });
+    var me = document.getElementById('meChip');
+    if (me) { me.hidden = !on; if (on) { me.querySelector('.n').textContent = S.auth.name + (S.auth.level !== 'Worker' ? ' · ' + S.auth.level : ''); } }
+  }
   function route() {
     document.removeEventListener('click', refocus);
-    var k = (location.hash || '#dashboard').slice(1); if (!VIEWS[k]) k = 'dashboard';
+    paintNav();
+    if (!signedIn()) { document.querySelectorAll('#tabs a').forEach(function (a) { a.classList.remove('on'); }); viewSignIn(); paintSync(); return; }
+    var k = (location.hash || '').slice(1);
+    if (!VIEWS[k] || !can(NEED[k] || 'Worker')) { k = can('Manager') && !TOUCH ? 'dashboard' : 'scan'; history.replaceState(null, '', location.pathname + location.search + '#' + k); }
     document.querySelectorAll('#tabs a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + k); });
     VIEWS[k]();
     paintSync();
   }
   window.addEventListener('hashchange', route);
   load();
-  var setupM = /^#setup=([^&]+)/.exec(location.hash || '');
-  if (setupM) {
-    var keep = S.settings || {};
-    if (S.demo || !sheetOn()) { S = blank(); S.workers = []; }
-    S.settings = keep; S.settings.sheetUrl = ARMORX_SHEET.url; S.settings.sheetKey = decodeURIComponent(setupM[1]);
-    if (!S.settings.station) S.settings.station = TOUCH ? 'Phone' : 'Computer';
-    S.demo = false; S.queue = []; save();
-    history.replaceState(null, '', location.pathname + location.search + '#scan');
-    setTimeout(function () { toast('This device is now connected to the ArmorX sheet. Pick your name to start.'); }, 300);
-  }
-  if (S.settings && S.settings.me && worker(S.settings.me)) sess.emp = S.settings.me;
+  if (/^#setup=/.test(location.hash || '')) history.replaceState(null, '', location.pathname + location.search); // old setup links: the PIN sign-in replaces them
+  if (S.settings && S.settings.sheetKey) { delete S.settings.sheetKey; save(); }
+  document.getElementById('soBtn').onclick = function () { signOut(); };
+  if (signedIn()) { sess.emp = S.auth.id; S.settings.me = S.auth.id; if (!worker(S.auth.id)) S.workers.push({ id: S.auth.id, name: S.auth.name, role: '' }); }
   if (!location.hash && TOUCH) history.replaceState(null, '', location.pathname + location.search + '#scan');
-  route(); if (sheetOn()) pull().then(function (c) { if (sess.emp == null && S.settings.me && worker(S.settings.me)) sess.emp = S.settings.me; if (c) route(); });
+  route(); if (sheetOn() && signedIn()) pull().then(function (c) { if (c) route(); });
   window.ArmorX = { handle: handle, state: function () { return S; } };
 })();

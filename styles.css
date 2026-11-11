@@ -236,3 +236,14 @@ details.pv[open]>summary{margin-bottom:8px}
   #print-area .lbl-loc .code{font-size:16pt}
   #print-area .lbl-batch .t b,#print-area .lbl-batch .made{font-size:9pt}
 }
+
+/* sign-in */
+.me-chip{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#cfd6db}
+.me-chip button{background:none;border:1px solid #7f909c;color:#fff;border-radius:3px;padding:3px 8px;cursor:pointer;font-size:.78rem}
+.signin{max-width:380px;margin:4vh auto 0;width:100%}
+.signin-f{display:flex;flex-direction:column;gap:12px}
+.signin-f input{font-size:1.3rem!important;padding:12px!important}
+.signin-f .btn{padding:12px 14px;font-size:1.05rem}
+#siPin{letter-spacing:.4em;font-family:var(--f-mono)}
+.pin-in{border:1px solid var(--line);padding:4px 6px;border-radius:2px;background:var(--surface);color:var(--ink);min-width:0}
+@media (max-width:600px){.me-chip{order:1;margin-left:auto}.me-chip .n{max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}

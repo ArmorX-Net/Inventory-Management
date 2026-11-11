@@ -18,7 +18,7 @@
 <body>
 <header class="top"><div class="top-in">
   <div class="brand"><i></i>ArmorX Inventory</div>
-  <nav class="tabs" id="tabs">
+  <nav class="tabs" id="tabs" hidden>
     <a href="#dashboard">Dashboard</a>
     <a href="#scan">Scan station</a>
     <a href="#pick">Pick list</a>
@@ -28,9 +28,11 @@
     <a href="#refill">Refill list</a>
     <a href="#print">Setup labels</a>
     <a href="#log">Scan log</a>
+    <a href="#people">People</a>
     <a href="#settings">Settings</a>
   </nav>
-  <span class="demo-pill" id="demoPill">DEMO · data stays in this browser</span>
+  <span class="demo-pill" id="demoPill" hidden>DEMO · data stays in this browser</span>
+  <span class="me-chip" id="meChip" hidden><span class="n"></span><button type="button" id="soBtn">Sign out</button></span>
 </div></header>
 <main id="app"></main>
 <div id="print-area"></div>

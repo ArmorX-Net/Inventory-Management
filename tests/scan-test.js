@@ -12,14 +12,15 @@ function batch(id, made) {
 }
 const STATE = {
   seq: 2, stock: {}, log: [], boxes: {}, demo: false, layout: 'v7', settings: { batchSize: '50x25' },
-  workers: [{ id: 'EMP-06', name: 'Test Picker', role: 'Racks & dispatch' }],
+  workers: [{ id: 'EMP-06', name: 'Test Picker', role: 'Racks & dispatch' }, { id: 'EMP-07', name: 'Test Stitcher', role: 'Stitching' }],
+  auth: { t: 'test-token', exp: Date.now() + 864e5, id: 'EMP-06', name: 'Test Picker', level: 'Admin' }, // signed in (no sheet in this test)
   batches: { 'WO-0001': batch('WO-0001', '2026-11-01T08:00:00.000Z'), 'WO-0002': batch('WO-0002', '2026-11-05T08:00:00.000Z') },
 };
 
 // [what we scan, text the feedback must contain]
 const STEPS = [
-  ['WO-0001', 'Scan your worker badge first'],
-  ['EMP-06', 'Hello Test Picker'],
+  ['EMP-06', 'Hello Test Picker'],             // signed in: your own badge just says hello
+  ['EMP-07', 'Sign out first'],                 // another person's badge never switches without their PIN
   ['WO-0001', 'ready for the rack'],
   [PICK, 'still has older nets'],               // FIFO: never rack-in on top of older nets
   ['2F', '20 nets in'],                          // extra stock goes on top of the racks; an old 2F label still works
@@ -136,12 +137,56 @@ const STEPS = [
   S = await st();
   expect('count sheet saved 30 with its reason', S.stock[NET] === 30 && S.log[0].reason === 'Found extra nets');
 
-  for (const tab of ['dashboard', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'settings']) {
+  for (const tab of ['dashboard', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'people', 'settings']) {
     await page.evaluate((t) => { location.hash = t; }, tab);
     await page.waitForTimeout(150);
   }
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
   else console.log('ok    every tab opens without errors');
+
+  // ---- sign-in: a new phone sees only the sign-in screen; a worker gets floor pages only ----
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p2 = await ctx2.newPage();
+  p2.on('pageerror', (e) => errors.push(e.message));
+  await p2.route(/google|googleapis|gstatic/, (r) => r.abort());
+  const gets = [];
+  await p2.route(/script\.google\.com/, async (r) => {
+    const req = r.request();
+    if (req.method() === 'POST') {
+      const b = JSON.parse(req.postData() || '{}');
+      if (b.action === 'login') {
+        const ok = b.badge === '7' && b.pin === '1234';
+        return r.fulfill({ contentType: 'application/json', body: JSON.stringify(ok ? { ok: true, v: 5, token: 'EMP-07.' + (Date.now() + 30 * 864e5) + '.sig', exp: Date.now() + 30 * 864e5, me: { id: 'EMP-07', name: 'Test Stitcher', level: 'Worker' } } : { ok: false, auth: true, error: 'Wrong employee number or PIN. 4 tries left.' }) });
+      }
+      return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, saved: (b.events || []).map((e) => e.id), refused: [] }) });
+    }
+    gets.push(req.url());
+    return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, v: 5, me: { id: 'EMP-07', name: 'Test Stitcher', level: 'Worker' }, stock: {}, batches: [], workers: [{ id: 'EMP-07', name: 'Test Stitcher', role: 'Stitching' }], log: [], rates: {}, boxes: {}, counts: {}, at: new Date().toISOString() }) });
+  });
+  await p2.goto('file://' + path.join(__dirname, '..', 'index.html') + '#stock');
+  await p2.waitForSelector('#siId');
+  expect('new phone: sign-in screen, no tabs, no data', await p2.isHidden('#tabs') && !(await p2.$('#scanIn')) && !(await p2.textContent('body')).includes('(sample)'));
+  await p2.fill('#siId', '7'); await p2.fill('#siPin', '1111'); await p2.click('#siGo');
+  await p2.waitForFunction(() => /tries left/.test(document.getElementById('siMsg').textContent));
+  expect('wrong PIN: stays on sign-in with the message', !!(await p2.$('#siId')));
+  await p2.fill('#siPin', '1234'); await p2.click('#siGo');
+  await p2.waitForSelector('#scanIn');
+  expect('right PIN: scan station, name in the top bar', (await p2.textContent('#meChip')).includes('Test Stitcher'));
+  expect('reads send the sign-in token, never a key', gets.length > 0 && gets.every((u) => /[?&]t=EMP-07\./.test(u) && !/key=/.test(u)));
+  const vis = await p2.$$eval('#tabs a', (as) => as.filter((a) => !a.hidden).map((a) => a.getAttribute('href')).join(' '));
+  expect('worker tabs: ' + vis, vis === '#scan #pick #racks #refill');
+  expect('worker has no Count button', !(await p2.$('[data-act="COUNT"]')) && !!(await p2.$('[data-act="BOXCOUNT"]')));
+  await p2.fill('#scanIn', 'CMD-COUNT'); await p2.press('#scanIn', 'Enter');
+  expect('worker CMD-COUNT refused', (await p2.textContent('#fb')).includes('Only a manager'));
+  await p2.evaluate(() => { location.hash = 'stock'; });
+  await p2.waitForTimeout(100);
+  expect('worker opening #stock lands on the scan station', (await p2.evaluate(() => location.hash)) === '#scan' && !!(await p2.$('#scanIn')));
+  const S2 = await p2.evaluate(() => JSON.parse(localStorage.getItem('armorx-inv-v1')));
+  expect('stays signed in for 30 days, PIN not kept on the phone', S2.auth.exp - Date.now() > 29 * 864e5 && !JSON.stringify(S2).includes('1234'));
+  await p2.click('#soBtn');
+  await p2.waitForSelector('#siId');
+  expect('sign out: back to sign-in, employee number remembered', (await p2.inputValue('#siId')) === 'EMP-07' && await p2.isHidden('#tabs'));
+  if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();
   console.log(failed ? failed + ' FAILED' : 'All scan tests passed.');
