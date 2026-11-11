@@ -12,6 +12,8 @@ jobs:
           node-version: 20
       - name: Layout data, syntax, secrets and print rule
         run: node tests/check-data.js
+      - name: Google Sheet script (undo, counts) on a fake sheet
+        run: node tests/sheet-test.js
       - name: Scan station rules in a real browser
         run: |
           npm install --no-save --no-package-lock playwright@1.49.1

@@ -37,5 +37,10 @@ The sheet is the master copy. Don't type into the Batches or Stock tabs by hand;
 ## If the internet drops
 Scans are kept on the computer and sent automatically when the connection comes back. The badge shows how many are waiting.
 
+## Version 4 (undo and box count)
+Paste the new `Code.gs` (keep your own access key on line 11), then deploy a new version as below. The **Counts** tab and the **Reason** column in Scans are added by themselves the first time the app reads the sheet (or run **setup** once). Until the new version is deployed, the app keeps Undo and Count boxes switched off.
+* **Counts**: box counts in progress, one row per box and net. Rows leave this tab when the manager presses Apply.
+* **Scans → Reason**: why a count was changed or a scan was undone. Undone scans get "UNDONE" at the end of their note.
+
 ## When you change Code.gs later
 Use **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**, so the URL stays the same.
