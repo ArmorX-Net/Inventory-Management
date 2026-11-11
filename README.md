@@ -54,3 +54,4 @@ Print from **Setup labels**. In the print dialog choose the thermal printer, set
 * `data/doornets.js`: layout v7. The 234 doornets (78 sizes × Black/Brown/Grey) with pick box, backup boxes and refill levels, plus every box slot (`BOXES`), side ranges and the 210×100 exception. Generated from Amazon sales (YTD to 20 Oct 2026, 90 and 30 days to 27 Oct). Classic and Royal share one stock.
 * `google-sheet/Code.gs` and `SETUP.md`: the Google Sheet backend and how to set it up.
 * `vendor/JsBarcode.all.min.js`: barcode library (MIT, JsBarcode 3.11.6).
+* `tests/`: automatic checks (layout data, secrets, print rule, and the Scan station rules in a real browser). They run on GitHub on every push. `CLAUDE.md` lists the rules every change must follow.
