@@ -65,7 +65,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 5 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 6 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -123,7 +123,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 5', state().v === 5);
+expect('doGet says version 6', state().v === 6);
 
 // batch: label, two steps, a reject, then undo the last step
 post([{ type: 'BATCH', wo: 'WO-0001', net: NET, qty: 20 }]);
@@ -176,6 +176,16 @@ post([{ type: 'OUT', net: NET, qty: 10 }]);
 post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);
 post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);
 expect('a repeated event is applied once', state().stock[NET] === 20);
+
+// put away: adds add up (two phones adding to the same box both count), undo takes only its own nets back off
+post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: 'DN-190x95-BK', netName: '190x95 Black', qty: 1 }]);
+post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: 'DN-190x95-BK', qty: 4 }, { type: 'BOXADD', loc: 'TOP', net: 'DN-190x95-BK', qty: 3 }]);
+s = state();
+const c = (box) => (s.counts.find((x) => x.box === box && x.net === 'DN-190x95-BK') || {}).qty;
+expect('put away: 1 + 4 in the box = 5, 3 on top', c('AL-C3-R2') === 5 && c('TOP') === 3);
+post([{ type: 'UNDO', undoes: 'z', reason: 'Wrong number', stock: {}, countsAdd: { 'AL-C3-R2|DN-190x95-BK': { add: -4, drop: false }, 'TOP|DN-190x95-BK': { add: -3, drop: true } } }]);
+s = state();
+expect('undo put away: box back to 1, the new TOP row is gone', c('AL-C3-R2') === 1 && c('TOP') === undefined);
 
 console.log(failed ? failed + ' FAILED' : 'All sheet tests passed.');
 process.exit(failed ? 1 : 0);

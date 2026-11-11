@@ -19,7 +19,8 @@ Read this before changing the app. These are the owner's standing rules. If a ch
 * Undo: a worker can undo only their own last scan on that device, within 15 minutes, and must pick a reason. Undo refuses if someone changed the same batch, box or count since. Older mistakes are fixed with COUNT.
 * Every count that changes stock needs a reason (scan station COUNT, count sheet, box count).
 * Box count (opening count, day 14 count): scan each shelf label and type how many are in that box (3-bin box: one number per color), TOP for extra stock on top of the racks. Stock changes only when the manager presses Apply on the Stock page. A net is applied only when all its boxes are counted.
-* `Code.gs` reports its version (`v`). Undo and box count stay off until the sheet runs version 4 or later, so an old script never gets events it cannot apply.
+* Put away (opening count, net first, owner 11 Nov 2026): the worker types the size of the net in hand, taps the color, the app shows the box in big letters with a plain hint (rack, side, column, row) and they tap how many they put in. Each tap ADDS to that box's count (event BOXADD, Code.gs v6), so several trips and several phones add up. Box full: Top +N records extra stock on top. Scanning the shelf is optional (confirms or warns). Undo takes only that add back off. Same Box count review and Apply step as Count boxes.
+* `Code.gs` reports its version (`v`). Put away needs version 6. Undo and box count stay off until the sheet runs version 4 or later, so an old script never gets events it cannot apply.
 
 ## Printing
 * Everything printed is solid black only. No color, no grey (black-and-white printer).

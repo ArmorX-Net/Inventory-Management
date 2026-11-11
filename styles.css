@@ -247,3 +247,20 @@ details.pv[open]>summary{margin-bottom:8px}
 #siPin{letter-spacing:.4em;font-family:var(--f-mono)}
 .pin-in{border:1px solid var(--line);padding:4px 6px;border-radius:2px;background:var(--surface);color:var(--ink);min-width:0}
 @media (max-width:600px){.me-chip{order:1;margin-left:auto}.me-chip .n{max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+/* put away: big, simple screens for the opening count */
+.pa{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.pa-step{color:#cfd6db;font-size:1rem;font-weight:600}
+.pa-in{font:inherit;font-size:1.6rem;font-family:var(--f-mono);padding:10px 12px;border:2px solid var(--tag);border-radius:4px;background:#0e1316;color:#fff;width:100%;box-sizing:border-box}
+.pa-sizes,.pa-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.pa-sizes .act,.pa-cols .act{font-size:1.15rem;min-height:56px}
+.pa-col{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.act.pa-same{border-style:dashed;text-align:left;padding:8px 12px}
+.pa-card{border:2px solid #556;border-radius:6px;padding:12px;background:#151c20}
+.pa-net{font-size:1.2rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px}
+.pa-go{color:#cfd6db;font-size:.95rem;margin-top:4px}
+.pa-loc{font-family:var(--f-mono);font-weight:700;font-size:3rem;line-height:1.05;color:var(--tag);letter-spacing:.02em}
+.pa-hint{color:#fff;font-size:1.05rem}
+.pa-have{color:#cfd6db;font-size:1rem}
+.act.pa-add{font-size:1.3rem;min-height:56px}
+.linkbtn{font:inherit;background:none;border:none;color:var(--tag);text-decoration:underline;cursor:pointer;padding:0 4px}
+@media (max-width:600px){.pa-loc{font-size:2.6rem}}

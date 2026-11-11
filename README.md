@@ -36,6 +36,7 @@ See [LAYOUT.md](LAYOUT.md). In short: doornets on racks A–C, sizes in number o
 | Return | Anyone | `CMD-RETURN` (or `CMD-DAMAGED`) → pick box → quantity |
 | Fix a count | Anyone | `CMD-COUNT` → any box of the net → total quantity (boxes + top of racks). If it is different from the system, tap a reason. |
 | Undo my last scan | The same worker | **Undo my last scan** button (or `CMD-UNDO`) within 15 minutes → tap why. Only your own last scan on that device. |
+| Put away (opening count, net in hand) | Anyone | **Put away nets** (or `CMD-PUTAWAY`) → type the size (e.g. `210 90`) → tap the color → the app shows the box in big letters → put the nets in → tap **+1 … +10** (or type a number). It adds up. Box full: **Top +N**. Same review and **Apply** on the Stock page as the box count. |
 | Box count (opening count, day 14) | Anyone | **Count boxes** (or `CMD-BOXCOUNT`) → shelf label → how many in that box (3-bin box: one number per color). `TOP` → size + color → number. Then the manager opens **Stock → Box count → Review and apply**, picks a reason and presses **Apply**. |
 
 If nets are rejected at a step, type the good count and press Enter right after the scan.
