@@ -37,6 +37,9 @@ See [LAYOUT.md](LAYOUT.md). In short: doornets on racks A–C, sizes in number o
 | Fix a count | Anyone | `CMD-COUNT` → any box of the net → total quantity (boxes + top of racks). If it is different from the system, tap a reason. |
 | Undo my last scan | The same worker | **Undo my last scan** button (or `CMD-UNDO`) within 15 minutes → tap why. Only your own last scan on that device. |
 | Put away (opening count, net in hand) | Anyone | **Put away nets** (or `CMD-PUTAWAY`) → type the size (e.g. `210 90`) → tap the color → the app shows the box in big letters → put the nets in → tap **+1 … +10** (or type a number). It adds up and goes into stock at once (dashboard shows it). Box full: **Top +N**. |
+| Change one box's number | Manager | **Rack map** → tap the box → pick box or top of racks → type the real number → pick a reason → **Save**. The net's total moves by the difference. |
+| Excel download / upload | Manager | **Stock → Excel** → **Download Excel**, change the **In box** column, save, **Upload Excel or CSV** → check the list of changes → pick a reason → **Save**. **Undo last upload** puts the old numbers back. |
+| Restore an earlier copy | Admin | **Settings → Snapshots and restore** → pick a copy → **Preview** → type `RESTORE` → **Restore this copy**. A copy is saved every evening (30 days) and before every reset. |
 | Reset inventory to zero | Owner | **Settings → Reset inventory to zero** → type `RESET` → **Reset to zero**. A snapshot is saved first; the scan log is kept. |
 | Box count (opening count, day 14) | Anyone | **Count boxes** (or `CMD-BOXCOUNT`) → shelf label → how many in that box (3-bin box: one number per color). `TOP` → size + color → number. Then the manager opens **Stock → Box count → Review and apply**, picks a reason and presses **Apply**. |
 

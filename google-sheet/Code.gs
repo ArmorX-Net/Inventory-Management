@@ -17,14 +17,18 @@
 // Version 6 (11 Nov 2026): put away (BOXADD adds nets to a box count instead of replacing it).
 // Version 7 (11 Nov 2026): put away changes stock straight away ("Put away" tab keeps how many went in each box),
 //   Owner level, reset inventory to zero (Owner only, snapshot first, scan log kept).
-var VERSION = 7;
+// Version 8 (11 Nov 2026): number per box ("In boxes" tab, was "Put away"): change one box's number, Excel upload,
+//   picks and rack-ins keep it up to date; daily snapshot (kept 30 days) and restore from any snapshot (Admin).
+var VERSION = 8;
+var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes']; // what a snapshot copies and a reset or restore replaces
+var KEEP_DAYS = 30;          // daily snapshots kept this long
 var SIGNIN_DAYS = 30;       // a phone stays signed in this long
 var MAX_TRIES = 5;          // wrong PINs in a row before the badge is locked
 var LOCK_MIN = 15;          // first lock; doubles with every further lock, up to one day
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, pick, refill,
 // empty, swap, returns, box count, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', COUNTDONE: 'Manager', BOXSET: 'Manager', WORKER: 'Admin', RESET: 'Owner' };
+var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', COUNTDONE: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -35,16 +39,19 @@ var TABS = {
   Workers: ['Badge', 'Name', 'Main step', 'Level', 'Active', 'New PIN', 'PIN hash', 'Wrong tries', 'Locked until', 'Last sign-in'],
   Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By'],
   Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID'],
-  'Put away': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID'],
+  'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID'],
   Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row']
 };
-// Put away: how many nets each put away added to each box (or TOP). Stock already includes them: no Apply step.
-// Snapshots: a copy of Stock, Boxes, Counts and Put away taken just before every reset (one sheet row per row copied).
+// In boxes: how many nets are in each box (or TOP), one row per box + net. Put away adds, a manager's box change or an
+//   Excel upload sets it, picks take off, rack-in adds, box count Apply sets it. Stock (the total per net) already includes it.
+// Snapshots: a copy of Stock, Boxes, Counts and In boxes: every day (DAY-...) and before every reset or restore.
 // Counts: box count in progress (scan the shelf, type the number). Rows leave this tab when the manager presses Apply in the app.
 // Layout v7: every box slot on racks A-C. "empty" boxes are on the refill list; Made drives first made, first shipped.
 
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var old = ss.getSheetByName('Put away'); // version 7 name
+  if (old && !ss.getSheetByName('In boxes')) old.setName('In boxes');
   Object.keys(TABS).forEach(function (name) {
     var sh = ss.getSheetByName(name) || ss.insertSheet(name);
     if (sh.getLastRow() === 0) {
@@ -56,6 +63,23 @@ function setup() {
   });
   secret_();
   pins_();
+  dailyTrigger_();
+}
+// Daily snapshot at about 23:00. Installing a trigger needs permission once (Google asks when you run setup).
+function dailyTrigger_() {
+  try {
+    if (ScriptApp.getProjectTriggers().some(function (tr) { return tr.getHandlerFunction() === 'dailySnapshot'; })) return;
+    ScriptApp.newTrigger('dailySnapshot').timeBased().everyDays(1).atHour(23).create();
+  } catch (err) {} // no permission yet: run setup from the editor once
+}
+function dailySnapshot() {
+  var t = new Date(), day = Utilities.formatDate(t, Session.getScriptTimeZone(), 'yyyyMMdd');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var cut = Utilities.formatDate(new Date(t.getTime() - KEEP_DAYS * 864e5), Session.getScriptTimeZone(), 'yyyyMMdd');
+    deleteWhere_('Snapshots', function (r) { var m = /^DAY-(\d{8})/.exec(String(r[0])); return m && (m[1] < cut || m[1] === day); });
+    snapshot_('DAY-' + day, t, 'Daily copy');
+  } finally { lock.releaseLock(); }
 }
 
 function json_(obj) {
@@ -187,7 +211,14 @@ function doGet(e) {
   pins_();
   var me = auth_(p.t);
   if (!me) return json_({ ok: false, auth: true, v: VERSION, error: 'Please sign in.' });
-  var mgr = atLeast_(me.level, 'Manager'), adm = me.level === 'Admin';
+  var mgr = atLeast_(me.level, 'Manager'), adm = atLeast_(me.level, 'Admin');
+  if (p.snap) { // restore preview: what that snapshot holds (Admin)
+    if (!adm) return json_({ ok: false, error: 'Only an admin can look at snapshots.' });
+    var sr = snapRows_(String(p.snap)), st = {}, ib = [];
+    sr.Stock.forEach(function (r) { st[r[0]] = Number(r[2]) || 0; });
+    sr['In boxes'].forEach(function (r) { ib.push({ box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0 }); });
+    return json_({ ok: true, v: VERSION, snap: String(p.snap), stock: st, shelf: ib, boxes: sr.Boxes.length, counts: sr.Counts.length });
+  }
   var stock = {};
   rows_('Stock').forEach(function (r) { stock[r[0]] = Number(r[2]) || 0; });
   var batches = rows_('Batches').map(function (r) {
@@ -207,8 +238,18 @@ function doGet(e) {
   var boxes = {};
   rows_('Boxes').forEach(function (r) { if (r[0]) boxes[r[0]] = { state: r[1] || 'full', net: r[2] || '', wo: r[3] || '', made: iso_(r[4]) || null, at: iso_(r[5]), by: r[6] || '' }; });
   var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
-  var shelf = rows_('Put away').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
-  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, resetAt: resetAt_(), at: new Date().toISOString() });
+  var shelf = rows_('In boxes').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
+  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, resetAt: resetAt_(), snaps: atLeast_(me.level, 'Admin') ? snapList_() : [], at: new Date().toISOString() });
+}
+function snapList_() { // newest first: id, time, by, rows
+  var o = {}, order = [];
+  rows_('Snapshots').forEach(function (r) { var id = String(r[0]); if (!id) return; if (!o[id]) { o[id] = { id: id, t: iso_(r[1]), by: r[2], rows: 0 }; order.push(id); } if (r[3] !== '(nothing)') o[id].rows++; });
+  return order.reverse().map(function (id) { return o[id]; });
+}
+function snapRows_(id) { // the rows of one snapshot, by tab (old 'Put away' rows count as In boxes)
+  var out = {}; SNAP_TABS.forEach(function (n) { out[n] = []; });
+  rows_('Snapshots').forEach(function (r) { if (String(r[0]) !== id || !r[4]) return; var tab = r[3] === 'Put away' ? 'In boxes' : r[3]; if (out[tab]) out[tab].push(JSON.parse(r[4])); });
+  return out;
 }
 function iso_(v) { return (v && typeof v.getTime === 'function') ? new Date(v.getTime()).toISOString() : (v ? String(v) : ''); }
 
@@ -288,7 +329,7 @@ function apply_(ev, station) {
       if (ev.type === 'IN') sh.getRange(b.row, 10).setValue(ev.loc || '');
       if (ev.rej) sh.getRange(b.row, 23).setValue((Number(b.values[22]) || 0) + Number(ev.rej));
     }
-    if (ev.type === 'IN') stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t);
+    if (ev.type === 'IN') { stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t); countAdd_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, Number(ev.qty), false, t, ev.who, ev.id, 'In boxes'); }
     if (ev.type === 'IN' && ev.loc && ev.loc !== '2F' && ev.loc !== 'TOP') box_(ev.loc, 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'SWAP') {
     var from = findRow_('Boxes', ev.loc);
@@ -308,8 +349,10 @@ function apply_(ev, station) {
     }
   } else if (ev.type === 'OUT' || ev.type === 'FBA') {
     stock_(ev.net, ev.netName, -Number(ev.qty), 'add', ev.type, t);
+    if (ev.loc) takeOff_(ev.loc, ev.net, Number(ev.qty), t, ev.who, ev.id);
   } else if (ev.type === 'RETURN') {
     stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Return', t);
+    if (ev.loc) countAdd_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, Number(ev.qty), false, t, ev.who, ev.id, 'In boxes');
   } else if (ev.type === 'COUNT') {
     stock_(ev.net, ev.netName, Number(ev.qty), 'set', 'Count', t);
   } else if (ev.type === 'UNDO') {
@@ -318,18 +361,23 @@ function apply_(ev, station) {
     count_(ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id);
   } else if (ev.type === 'BOXADD') { // put away: stock goes up now; the Put away tab keeps the number per box
     var q = Number(ev.qty) || 0;
-    countAdd_(ev.loc, ev.net, ev.netName, q, false, t, ev.who, ev.id, 'Put away');
+    countAdd_(ev.loc, ev.net, ev.netName, q, false, t, ev.who, ev.id, 'In boxes');
     stock_(ev.net, ev.netName, q, 'add', 'Put away ' + (ev.loc || ''), t);
     if (ev.loc && ev.loc !== 'TOP' && ev.loc !== '2F') {
       var bx = findRow_('Boxes', ev.loc);
       if (bx && bx.values[1] === 'empty') box_(ev.loc, 'full', ev.boxNet || '', '', '', t, ev.who);
     }
+  } else if (ev.type === 'BOXQTY') { // a manager sets one box's number (or an Excel upload row): stock moves by the difference
+    boxQty_(ev, t);
+  } else if (ev.type === 'RESTORE') {
+    restore_(ev, t);
   } else if (ev.type === 'RESET') {
     reset_(ev, t);
   } else if (ev.type === 'BOXSET') {
     box_(ev.loc, ev.state || 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'COUNTDONE') {
     var keys = {}; (ev.keys || []).forEach(function (k) { keys[k] = true; });
+    rows_('Counts').forEach(function (r) { if (keys[r[0] + '|' + r[1]]) setIn_(String(r[0]), String(r[1]), r[2], Number(r[3]) || 0, t, ev.who, ev.id); });
     deleteWhere_('Counts', function (r) { return keys[r[0] + '|' + r[1]]; });
   }
   // DAMAGED is only logged: damaged returns do not go back to stock.
@@ -385,7 +433,7 @@ function undo_(ev, t) {
   var ca = ev.countsAdd || {}; // undo of a version 6 put away: take the nets back off, so adds from other phones are kept
   Object.keys(ca).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(ca[k].add) || 0, !!ca[k].drop, t, ev.who, ev.id); });
   var pa = ev.putAdd || {}; // undo of a put away (version 7): the stock part comes back through ev.stock
-  Object.keys(pa).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(pa[k].add) || 0, !!pa[k].drop, t, ev.who, ev.id, 'Put away'); });
+  Object.keys(pa).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(pa[k].add) || 0, !!pa[k].drop, t, ev.who, ev.id, 'In boxes'); });
 }
 
 // Put away: add nets to a box (or TOP) count. Several phones can add to the same box at once.
@@ -419,19 +467,62 @@ function deleteWhere_(name, test) {
 }
 
 // Reset inventory to zero (Owner only). First a snapshot of every row that is cleared goes to the Snapshots tab,
-// then Stock, Boxes, Counts and Put away are emptied. The scan log (Scans) and Batches stay: history is never lost.
+// then Stock, Boxes, Counts and In boxes are emptied. The scan log (Scans) and Batches stay: history is never lost.
 function reset_(ev, t) {
-  var id = 'SNAP-' + Utilities.formatDate(t, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
-  var snap = sheet_('Snapshots'), out = [];
-  ['Stock', 'Boxes', 'Counts', 'Put away'].forEach(function (name) {
-    rows_(name).forEach(function (r) { if (r[0] !== '') out.push([id, t, workerName_(ev.who), name, JSON.stringify(r)]); });
-  });
-  if (!out.length) out.push([id, t, workerName_(ev.who), '(nothing)', '']);
-  snap.getRange(snap.getLastRow() + 1, 1, out.length, 5).setValues(out);
-  ['Stock', 'Boxes', 'Counts', 'Put away'].forEach(function (name) {
-    var sh = sheet_(name); if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TABS[name].length).clearContent();
-  });
+  var id = 'SNAP-' + stamp_(t), n = snapshot_(id, t, workerName_(ev.who));
+  clearTabs_();
   PropertiesService.getScriptProperties().setProperty('RESET_AT', t.toISOString());
   var row = findRow_('Scans', ev.id);
-  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Inventory reset to zero · snapshot ' + id + ' (' + (out.length) + ' rows)' + (ev.reason ? ' · reason: ' + ev.reason : ''));
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Inventory reset to zero · snapshot ' + id + ' (' + n + ' rows)' + (ev.reason ? ' · reason: ' + ev.reason : ''));
+}
+
+// ---------- number per box ----------
+function inBox_(box, net) { var r = rows_('In boxes'); for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) return { row: i + 2, qty: Number(r[i][3]) || 0, values: r[i] }; return null; }
+function setIn_(box, net, name, qty, t, who, id) {
+  var sh = sheet_('In boxes'), f = inBox_(box, net), row = [box, net, name || (f ? f.values[2] : ''), qty, t, workerName_(who), id || ''];
+  if (f) sh.getRange(f.row, 1, 1, row.length).setValues([row]); else sh.appendRow(row);
+}
+// a pick from a box takes the nets off that box's number (never below 0; the total per net is what counts)
+function takeOff_(box, net, q, t, who, id) {
+  var f = inBox_(box === '2F' ? 'TOP' : box, net); if (!f) return;
+  sheet_('In boxes').getRange(f.row, 4, 1, 4).setValues([[Math.max(0, f.qty - q), t, workerName_(who), id || '']]);
+}
+function boxQty_(ev, t) {
+  if (!ev.loc || !ev.net) return;
+  var loc = ev.loc === '2F' ? 'TOP' : ev.loc, f = inBox_(loc, ev.net), was = f ? f.qty : 0, q = Math.max(0, Math.round(Number(ev.qty) || 0));
+  setIn_(loc, ev.net, ev.netName, q, t, ev.who, ev.id);
+  if (q !== was) stock_(ev.net, ev.netName, q - was, 'add', (ev.upload ? 'Excel upload ' : 'Box change ') + loc, t);
+  var row = findRow_('Scans', ev.id);
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue((ev.upload ? 'Excel upload ' + ev.upload + ': ' : 'Box change: ') + loc + ' ' + was + ' → ' + q + (ev.reason ? ' · reason: ' + ev.reason : ''));
+  if (loc !== 'TOP' && ev.boxState) { var b = findRow_('Boxes', loc), cur = b ? b.values[1] : 'full'; if (cur !== ev.boxState) box_(loc, ev.boxState, ev.boxNet || '', '', '', t, ev.who); }
+}
+
+function snapshot_(id, t, who) {
+  var snap = sheet_('Snapshots'), out = [];
+  SNAP_TABS.forEach(function (name) {
+    rows_(name).forEach(function (r) { if (r[0] !== '') out.push([id, t, who, name, JSON.stringify(r)]); });
+  });
+  if (!out.length) out.push([id, t, who, '(nothing)', '']);
+  snap.getRange(snap.getLastRow() + 1, 1, out.length, 5).setValues(out);
+  return out.length;
+}
+function clearTabs_() {
+  SNAP_TABS.forEach(function (name) { var sh = sheet_(name); if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TABS[name].length).clearContent(); });
+}
+function stamp_(t) { return Utilities.formatDate(t, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss'); }
+
+// Restore (Admin): copy of the current inventory first, then Stock, Boxes, Counts and In boxes come back from the snapshot.
+function restore_(ev, t) {
+  var src = snapRows_(String(ev.snap || '')), n = SNAP_TABS.reduce(function (a, k) { return a + src[k].length; }, 0);
+  var row = findRow_('Scans', ev.id);
+  if (!ev.snap || !rows_('Snapshots').some(function (r) { return String(r[0]) === String(ev.snap); })) { if (row) sheet_('Scans').getRange(row.row, 12).setValue('Restore refused: no snapshot ' + ev.snap); return; }
+  var id = 'SNAP-' + stamp_(t) + '-before-restore';
+  snapshot_(id, t, workerName_(ev.who));
+  clearTabs_();
+  SNAP_TABS.forEach(function (name) {
+    var rs = src[name].map(function (r) { var o = r.slice(0, TABS[name].length); while (o.length < TABS[name].length) o.push(''); return o; });
+    if (rs.length) { var sh = sheet_(name); sh.getRange(2, 1, rs.length, TABS[name].length).setValues(rs); }
+  });
+  PropertiesService.getScriptProperties().setProperty('RESET_AT', t.toISOString());
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Inventory restored from ' + ev.snap + ' (' + n + ' rows) · copy of before: ' + id + (ev.reason ? ' · reason: ' + ev.reason : ''));
 }

@@ -43,6 +43,8 @@ Use **Deploy → Manage deployments → Edit (pencil) → Version: New version �
 
 **Version 7 (11 Nov 2026):** put away goes into stock at once (new **Put away** tab keeps the number per box), the **Owner** level, and **Reset to zero** (Owner only; a copy goes to the new **Snapshots** tab first). Paste, Save, run **setup** once (adds the two tabs), deploy a new version. Then set your own row in the Workers tab to Level **Owner**.
 
+**Version 8 (11 Nov 2026):** number per box (the **Put away** tab is renamed **In boxes** by itself), box change, Excel upload, daily snapshot and restore. Paste, Save, run **setup** once: Google asks for one new permission ("run when you are not present"), which the daily copy at 23:00 needs. Then deploy a new version.
+
 ## Version 5 (sign-in with a PIN)
 Nobody can read or change anything without signing in. The check happens in this script on every read and every scan, so the public app link alone shows nothing.
 

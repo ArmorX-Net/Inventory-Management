@@ -15,6 +15,7 @@ function makeSheet(name) {
     appendRow: (row) => { data.length = sh.getLastRow(); data.push(row.slice()); },
     deleteRow: (n) => { data.splice(n - 1, 1); },
     setFrozenRows: () => {},
+    setName: (n) => { delete sheets[sh.name]; sh.name = n; sheets[n] = sh; },
     getRange: (r, c, nr, nc) => {
       nr = nr || 1; nc = nc || 1;
       const rng = {
@@ -32,7 +33,7 @@ function makeSheet(name) {
 const sheets = {};
 const ss = { getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet(n)) };
 const crypto = require('crypto');
-const props = {};
+const props = {}, triggers = [];
 const ctx = {
   SpreadsheetApp: { getActiveSpreadsheet: () => ss },
   PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
@@ -43,10 +44,11 @@ const ctx = {
     computeDigest: (alg, str) => [...crypto.createHash('sha256').update(str, 'utf8').digest()],
     computeHmacSha256Signature: (v, k) => [...crypto.createHmac('sha256', k).update(v, 'utf8').digest()],
     base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_'),
-    formatDate: (d) => d.toISOString().slice(11, 16),
+    formatDate: (d, tz, f) => { const x = new Date(d.getTime() + 5.5 * 36e5).toISOString(); return f.replace('yyyy', x.slice(0, 4)).replace('MM', x.slice(5, 7)).replace('dd', x.slice(8, 10)).replace('HH', x.slice(11, 13)).replace('mm', x.slice(14, 16)).replace('ss', x.slice(17, 19)); },
   },
   ContentService: { createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  ScriptApp: { getProjectTriggers: () => triggers, newTrigger: (fn) => ({ timeBased: () => ({ everyDays: () => ({ atHour: () => ({ create: () => triggers.push({ getHandlerFunction: () => fn }) }) }) }) }) },
   Date, JSON, Math, Number, String, Object,
 };
 vm.createContext(ctx);
@@ -66,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 7 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 8 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -124,7 +126,13 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 7', state().v === 7);
+expect('doGet says version 8', state().v === 8);
+expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
+expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
+  sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
+  const ok = !!sheets['In boxes'] && !sheets['Put away'] && sheets['In boxes'].data.length === 2;
+  sheets['In boxes'].data.splice(1); return ok;
+})());
 
 // batch: label, two steps, a reject, then undo the last step
 post([{ type: 'BATCH', wo: 'WO-0001', net: NET, qty: 20 }]);
@@ -196,6 +204,48 @@ post([{ type: 'EMPTY', loc: 'AL-C4-R2' }]);
 post([{ type: 'BOXADD', loc: 'AL-C4-R2', net: 'DN-190x95-BN', boxNet: 'DN-190x95-BN', qty: 2 }]);
 expect('put away into an empty box marks it as having nets again', state().boxes['AL-C4-R2'].state === 'full');
 
+// ---- number per box (version 8): picks take off, rack-in and returns add, a manager sets a box, box count Apply sets it ----
+const BX = 'DN-195x95-BK';
+const inb = (box, net) => { const x = get(T.token).shelf.find((y) => y.box === box && y.net === net); return x ? x.qty : undefined; };
+post([{ type: 'BOXADD', loc: 'AL-C5-R3', net: BX, qty: 10 }]);
+const bx0 = state().stock[BX];
+post([{ type: 'OUT', net: BX, qty: 3, loc: 'AL-C5-R3' }]);
+expect('a pick from a box takes it off that box and the total', inb('AL-C5-R3', BX) === 7 && state().stock[BX] === bx0 - 3);
+post([{ type: 'OUT', net: BX, qty: 9, loc: 'AL-C5-R3' }]);
+expect('a box number never goes below 0', inb('AL-C5-R3', BX) === 0);
+post([{ type: 'RETURN', net: BX, qty: 2, loc: 'AL-C5-R3' }]);
+expect('a return to a box adds to it', inb('AL-C5-R3', BX) === 2);
+const sBefore = state().stock[BX];
+post([{ type: 'BOXQTY', net: BX, loc: 'AL-C5-R3', qty: 12, reason: 'Found extra nets' }]);
+expect('manager sets a box 2 → 12: box 12, total +10, logged with reason', inb('AL-C5-R3', BX) === 12 && state().stock[BX] === sBefore + 10 && /Box change: AL-C5-R3 2 → 12 · reason: Found extra nets/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+post([{ type: 'BOXQTY', net: BX, loc: 'TOP', qty: 4, reason: 'Opening count', upload: 'UP-1' }]);
+expect('Excel upload row for TOP: 4 on top, total +4, logged as Excel upload', inb('TOP', BX) === 4 && state().stock[BX] === sBefore + 14 && /Excel upload UP-1/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+r = call({ t: login('EMP-07', '5555').token, events: [{ id: 'wq1', type: 'BOXQTY', net: BX, loc: 'AL-C5-R3', qty: 50, reason: 'x', t: '2026-11-11T09:00:00.000Z' }] });
+expect('a worker cannot set a box number', r.refused.length === 1 && inb('AL-C5-R3', BX) === 12);
+post([{ type: 'BOXQTY', net: BX, loc: 'AL-C5-R3', qty: 0, reason: 'Counted wrong before', boxState: 'empty' }]);
+expect('setting an own box to 0 marks it empty (refill list)', state().boxes['AL-C5-R3'].state === 'empty');
+post([{ type: 'BOXCOUNT', loc: 'AL-C5-R3', net: BX, qty: 9 }, { type: 'COUNTDONE', keys: ['AL-C5-R3|' + BX] }]);
+expect('box count Apply makes the counted number the box number', inb('AL-C5-R3', BX) === 9 && !state().counts.some((x) => x.net === BX));
+
+// ---- daily snapshot and restore ----
+ctx.dailySnapshot(); ctx.dailySnapshot();
+const days = [...new Set(sheets.Snapshots.data.filter((x) => /^DAY-/.test(x[0])).map((x) => x[0]))];
+expect('daily snapshot: one copy per day, running it twice keeps one', days.length === 1);
+sheets.Snapshots.data.push(['DAY-20200101', new Date('2020-01-01'), 'Daily copy', 'Stock', '["X",""]']);
+ctx.dailySnapshot();
+expect('daily copies older than 30 days are removed', !sheets.Snapshots.data.some((x) => x[0] === 'DAY-20200101'));
+const dayStock = state().stock[BX];
+expect('admin sees the list of copies, a manager does not', get(A.token).snaps.some((x) => x.id === days[0] && x.rows > 0) && get(T.token).snaps.length === 0);
+expect('preview of a copy: stock and box numbers (admin only)', (() => { const x = JSON.parse(ctx.doGet({ parameter: { t: A.token, snap: days[0] } }).text); const y = JSON.parse(ctx.doGet({ parameter: { t: T.token, snap: days[0] } }).text); return x.ok && x.stock[BX] === dayStock && x.shelf.some((b) => b.box === 'AL-C5-R3' && b.qty === 9) && !y.ok; })());
+post([{ type: 'BOXQTY', net: BX, loc: 'AL-C5-R3', qty: 30, reason: 'Other: test' }]);
+r = call({ t: T.token, events: [{ id: 'rsx', type: 'RESTORE', snap: days[0], t: new Date().toISOString() }] });
+expect('a manager cannot restore', r.refused.length === 1 && inb('AL-C5-R3', BX) === 30);
+r = call({ t: A.token, events: [{ id: 'rs9', type: 'RESTORE', snap: days[0], t: new Date().toISOString(), reason: 'test' }] });
+expect('admin restore: stock and box numbers back to the copy', !r.refused.length && state().stock[BX] === dayStock && inb('AL-C5-R3', BX) === 9);
+expect('restore saved a copy of before first, and logged it', sheets.Snapshots.data.some((x) => /before-restore$/.test(x[0]) && x[3] === 'In boxes' && JSON.parse(x[4])[3] === 30) && /restored from DAY-/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+r = call({ t: A.token, events: [{ id: 'rs10', type: 'RESTORE', snap: 'NOPE', t: new Date().toISOString() }] });
+expect('restore from a copy that does not exist changes nothing', state().stock[BX] === dayStock && /refused/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+
 // ---- Owner level and reset to zero ----
 sheets.Workers.data.find((w) => w[0] === 'EMP-00')[3] = 'Owner';
 const O = login('EMP-00', '1234');
@@ -209,15 +259,15 @@ expect('an admin cannot change the Owner or give the Owner level', (() => {
   return !a1.ok && !a2.ok;
 })());
 expect('the Owner cannot remove their own Owner level', !call({ action: 'admin', t: O.token, person: { id: 'EMP-00', level: 'Admin' } }).ok);
-const later = (sec) => new Date(Date.now() + sec * 1000).toISOString();
+const later = (sec) => new Date(Date.now() + 60000 + sec * 1000).toISOString();
 r = call({ t: T.token, events: [{ id: 'rs0', type: 'RESET', t: later(0), reason: 'Testing' }] });
 expect('a manager cannot reset', r.refused.length === 1 && Object.keys(state().stock).length > 0);
-const rowsBefore = ['Stock', 'Boxes', 'Counts', 'Put away'].reduce((a, n) => a + sheets[n].data.length - 1, 0);
+const rowsBefore = ['Stock', 'Boxes', 'Counts', 'In boxes'].reduce((a, n) => a + sheets[n].data.length - 1, 0);
 const scansBefore = sheets.Scans.data.length;
 r = call({ t: O.token, events: [{ id: 'rs1', type: 'RESET', t: later(0), reason: 'Testing' }] });
 s = get(O.token);
 expect('Owner reset: stock, boxes, waiting counts and put aways are all empty', r.ok && !r.refused.length && Object.keys(s.stock).length === 0 && Object.keys(s.boxes).length === 0 && !s.counts.length && !s.shelf.length);
-expect('reset: a snapshot of every cleared row is saved first', sheets.Snapshots.data.filter((x) => /^SNAP-/.test(x[0])).length === rowsBefore && sheets.Snapshots.data.some((x) => x[3] === 'Stock' && JSON.parse(x[4])[0] === NET));
+expect('reset: a snapshot of every cleared row is saved first', sheets.Snapshots.data.filter((x) => /^SNAP-\d+-\d+$/.test(x[0])).length === rowsBefore && sheets.Snapshots.data.some((x) => x[3] === 'Stock' && JSON.parse(x[4])[0] === NET));
 expect('reset: the scan log is kept, with a Reset line', sheets.Scans.data.length === scansBefore + 1 && /reset to zero · snapshot SNAP-/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
 expect('reset: doGet tells phones when the reset was', !!s.resetAt);
 r = call({ t: T.token, events: [{ id: 'old1', type: 'OUT', net: NET, qty: 1, t: '2026-11-11T09:00:00.000Z' }, { id: 'old2', type: 'UNDO', undoes: 'ev1', t: later(5), reason: 'x', stock: { [NET]: 5 } }] });
