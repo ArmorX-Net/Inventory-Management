@@ -10,9 +10,9 @@ function makeSheet(name) {
   const data = []; // rows of values, row 1 = header
   const sh = {
     name, data,
-    getLastRow: () => data.length,
+    getLastRow: () => { let k = data.length; while (k > 0 && (data[k - 1] || []).every((v) => v === '' || v == null)) k--; return k; }, // like Sheets: last row with content
     getLastColumn: () => data.reduce((a, r) => Math.max(a, r.length), 0),
-    appendRow: (row) => { data.push(row.slice()); },
+    appendRow: (row) => { data.length = sh.getLastRow(); data.push(row.slice()); },
     deleteRow: (n) => { data.splice(n - 1, 1); },
     setFrozenRows: () => {},
     getRange: (r, c, nr, nc) => {
@@ -22,6 +22,7 @@ function makeSheet(name) {
         setValues: (v) => { for (let i = 0; i < nr; i++) { while (data.length < r + i) data.push([]); for (let j = 0; j < nc; j++) data[r - 1 + i][c - 1 + j] = v[i][j]; } return rng; },
         setValue: (v) => rng.setValues([[v]]),
         setFontWeight: () => rng,
+        clearContent: () => { for (let i = 0; i < nr; i++) { const row = data[r - 1 + i]; if (row) for (let j = 0; j < nc; j++) row[c - 1 + j] = ''; } return rng; },
       };
       return rng;
     },
@@ -65,7 +66,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 6 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 7 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -123,7 +124,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 6', state().v === 6);
+expect('doGet says version 7', state().v === 7);
 
 // batch: label, two steps, a reject, then undo the last step
 post([{ type: 'BATCH', wo: 'WO-0001', net: NET, qty: 20 }]);
@@ -177,15 +178,56 @@ post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);
 post([{ id: 'dup', type: 'OUT', net: NET, qty: 3 }]);
 expect('a repeated event is applied once', state().stock[NET] === 20);
 
-// put away: adds add up (two phones adding to the same box both count), undo takes only its own nets back off
-post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: 'DN-190x95-BK', netName: '190x95 Black', qty: 1 }]);
-post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: 'DN-190x95-BK', qty: 4 }, { type: 'BOXADD', loc: 'TOP', net: 'DN-190x95-BK', qty: 3 }]);
+// put away (version 7): stock goes up at once, the Put away tab keeps the number per box, adds from two phones add up,
+// undo takes only its own nets back off (stock and box number)
+const PN = 'DN-190x95-BK';
+const before = state().stock[PN] || 0;
+post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: PN, netName: '190x95 Black', qty: 1 }]);
+post([{ type: 'BOXADD', loc: 'AL-C3-R2', net: PN, qty: 4 }, { type: 'BOXADD', loc: 'TOP', net: PN, qty: 3 }]);
 s = state();
-const c = (box) => (s.counts.find((x) => x.box === box && x.net === 'DN-190x95-BK') || {}).qty;
+const c = (box) => (s.shelf.find((x) => x.box === box && x.net === PN) || {}).qty;
 expect('put away: 1 + 4 in the box = 5, 3 on top', c('AL-C3-R2') === 5 && c('TOP') === 3);
-post([{ type: 'UNDO', undoes: 'z', reason: 'Wrong number', stock: {}, countsAdd: { 'AL-C3-R2|DN-190x95-BK': { add: -4, drop: false }, 'TOP|DN-190x95-BK': { add: -3, drop: true } } }]);
+expect('put away: stock goes up straight away (+8), no Apply needed', s.stock[PN] === before + 8);
+expect('put away does not touch the box count list', !s.counts.some((x) => x.net === PN));
+post([{ type: 'UNDO', undoes: 'z', reason: 'Wrong number', net: PN, stock: { [PN]: -7 }, putAdd: { 'AL-C3-R2|DN-190x95-BK': { add: -4, drop: false }, 'TOP|DN-190x95-BK': { add: -3, drop: true } } }]);
 s = state();
-expect('undo put away: box back to 1, the new TOP row is gone', c('AL-C3-R2') === 1 && c('TOP') === undefined);
+expect('undo put away: box back to 1, the new TOP row is gone, stock back to +1', c('AL-C3-R2') === 1 && c('TOP') === undefined && s.stock[PN] === before + 1);
+post([{ type: 'EMPTY', loc: 'AL-C4-R2' }]);
+post([{ type: 'BOXADD', loc: 'AL-C4-R2', net: 'DN-190x95-BN', boxNet: 'DN-190x95-BN', qty: 2 }]);
+expect('put away into an empty box marks it as having nets again', state().boxes['AL-C4-R2'].state === 'full');
+
+// ---- Owner level and reset to zero ----
+sheets.Workers.data.find((w) => w[0] === 'EMP-00')[3] = 'Owner';
+const O = login('EMP-00', '1234');
+expect('the Owner signs in with level Owner', O.ok && O.me.level === 'Owner');
+expect('the Owner can still do admin work', call({ action: 'admin', t: O.token, person: { id: 'EMP-07', unlock: true } }).ok);
+expect('an admin cannot change the Owner or give the Owner level', (() => {
+  sheets.Workers.data.find((w) => w[0] === 'EMP-06')[3] = 'Admin';
+  const ad = login('EMP-06', '1234');
+  const a1 = call({ action: 'admin', t: ad.token, person: { id: 'EMP-00', level: 'Worker' } }), a2 = call({ action: 'admin', t: ad.token, person: { id: 'EMP-07', level: 'Owner' } });
+  sheets.Workers.data.find((w) => w[0] === 'EMP-06')[3] = 'Manager';
+  return !a1.ok && !a2.ok;
+})());
+expect('the Owner cannot remove their own Owner level', !call({ action: 'admin', t: O.token, person: { id: 'EMP-00', level: 'Admin' } }).ok);
+const later = (sec) => new Date(Date.now() + sec * 1000).toISOString();
+r = call({ t: T.token, events: [{ id: 'rs0', type: 'RESET', t: later(0), reason: 'Testing' }] });
+expect('a manager cannot reset', r.refused.length === 1 && Object.keys(state().stock).length > 0);
+const rowsBefore = ['Stock', 'Boxes', 'Counts', 'Put away'].reduce((a, n) => a + sheets[n].data.length - 1, 0);
+const scansBefore = sheets.Scans.data.length;
+r = call({ t: O.token, events: [{ id: 'rs1', type: 'RESET', t: later(0), reason: 'Testing' }] });
+s = get(O.token);
+expect('Owner reset: stock, boxes, waiting counts and put aways are all empty', r.ok && !r.refused.length && Object.keys(s.stock).length === 0 && Object.keys(s.boxes).length === 0 && !s.counts.length && !s.shelf.length);
+expect('reset: a snapshot of every cleared row is saved first', sheets.Snapshots.data.filter((x) => /^SNAP-/.test(x[0])).length === rowsBefore && sheets.Snapshots.data.some((x) => x[3] === 'Stock' && JSON.parse(x[4])[0] === NET));
+expect('reset: the scan log is kept, with a Reset line', sheets.Scans.data.length === scansBefore + 1 && /reset to zero · snapshot SNAP-/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+expect('reset: doGet tells phones when the reset was', !!s.resetAt);
+r = call({ t: T.token, events: [{ id: 'old1', type: 'OUT', net: NET, qty: 1, t: '2026-11-11T09:00:00.000Z' }, { id: 'old2', type: 'UNDO', undoes: 'ev1', t: later(5), reason: 'x', stock: { [NET]: 5 } }] });
+expect('after reset: a scan made before it, and an undo of an old scan, are refused', r.refused.map((x) => x.id).join() === 'old1,old2' && Object.keys(get(O.token).stock).length === 0);
+r = call({ t: T.token, events: [{ id: 'new1', type: 'BOXADD', loc: PICK, net: NET, qty: 6, t: later(5) }, { id: 'new2', type: 'BOXADD', loc: PICK, net: NET, qty: 2, t: later(6) }] });
+s = get(O.token);
+expect('after reset: put away starts again from zero and adds up', !r.refused.length && s.stock[NET] === 8 && s.shelf.length === 1 && s.shelf[0].qty === 8);
+const snapN = sheets.Snapshots.data.length;
+r = call({ t: O.token, events: [{ id: 'rs2', type: 'RESET', t: later(10), reason: 'Testing again' }] });
+expect('reset can be repeated: back to zero again, new snapshot of the 2 rows', Object.keys(get(O.token).stock).length === 0 && sheets.Snapshots.data.length === snapN + 2);
 
 console.log(failed ? failed + ' FAILED' : 'All sheet tests passed.');
 process.exit(failed ? 1 : 0);

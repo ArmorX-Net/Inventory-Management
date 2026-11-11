@@ -15,14 +15,16 @@
 // Version 4 (11 Nov 2026): undo the last scan, reasons on count changes, box count (opening count).
 // Version 5 (11 Nov 2026): PIN sign-in, levels, lockout after wrong PINs. The old access key is no longer used.
 // Version 6 (11 Nov 2026): put away (BOXADD adds nets to a box count instead of replacing it).
-var VERSION = 6;
+// Version 7 (11 Nov 2026): put away changes stock straight away ("Put away" tab keeps how many went in each box),
+//   Owner level, reset inventory to zero (Owner only, snapshot first, scan log kept).
+var VERSION = 7;
 var SIGNIN_DAYS = 30;       // a phone stays signed in this long
 var MAX_TRIES = 5;          // wrong PINs in a row before the badge is locked
 var LOCK_MIN = 15;          // first lock; doubles with every further lock, up to one day
-var LEVELS = ['Worker', 'Manager', 'Admin'];
+var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, pick, refill,
 // empty, swap, returns, box count, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', COUNTDONE: 'Manager', BOXSET: 'Manager', WORKER: 'Admin' };
+var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', COUNTDONE: 'Manager', BOXSET: 'Manager', WORKER: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -32,8 +34,12 @@ var TABS = {
   Stock:   ['Net ID', 'Net', 'On hand', 'Last change', 'Last change at'],
   Workers: ['Badge', 'Name', 'Main step', 'Level', 'Active', 'New PIN', 'PIN hash', 'Wrong tries', 'Locked until', 'Last sign-in'],
   Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By'],
-  Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID']
+  Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID'],
+  'Put away': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID'],
+  Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row']
 };
+// Put away: how many nets each put away added to each box (or TOP). Stock already includes them: no Apply step.
+// Snapshots: a copy of Stock, Boxes, Counts and Put away taken just before every reset (one sheet row per row copied).
 // Counts: box count in progress (scan the shelf, type the number). Rows leave this tab when the manager presses Apply in the app.
 // Layout v7: every box slot on racks A-C. "empty" boxes are on the refill list; Made drives first made, first shipped.
 
@@ -149,15 +155,17 @@ function admin_(me, body) {
   var sh = sheet_('Workers'), w = findRow_('Workers', id);
   if (!w) {
     if (!String(p.name || '').trim()) return { ok: false, error: 'Type a name for the new person.' };
-    sh.appendRow([id, String(p.name).trim(), p.role || '', LEVELS.indexOf(p.level) >= 0 ? p.level : 'Worker', 'Yes', '', '', 0, '', '']);
+    sh.appendRow([id, String(p.name).trim(), p.role || '', LEVELS.indexOf(p.level) >= 0 && (p.level !== 'Owner' || me.level === 'Owner') ? p.level : 'Worker', 'Yes', '', '', 0, '', '']);
     w = findRow_('Workers', id);
   }
-  var r = w.values.slice();
+  var r = w.values.slice(), owner = me.level === 'Owner';
+  if (level_(r) === 'Owner' && !owner) return { ok: false, error: 'Only the owner can change the owner.' };
+  if (p.level === 'Owner' && !owner) return { ok: false, error: 'Only the owner can give the Owner level.' };
   if (p.name != null && String(p.name).trim()) r[1] = String(p.name).trim();
   if (p.role != null) r[2] = p.role;
-  if (p.level != null) { if (LEVELS.indexOf(p.level) < 0) return { ok: false, error: 'Level must be Worker, Manager or Admin.' }; r[3] = p.level; }
+  if (p.level != null) { if (LEVELS.indexOf(p.level) < 0) return { ok: false, error: 'Level must be Worker, Manager, Admin or Owner.' }; r[3] = p.level; }
   if (p.active != null) r[4] = p.active ? 'Yes' : 'No';
-  if (id === me.id && (level_(r) !== 'Admin' || !active_(r))) return { ok: false, error: 'You cannot remove your own admin access. Ask another admin.' };
+  if (id === me.id && (level_(r) !== me.level || !active_(r))) return { ok: false, error: 'You cannot change your own level or switch yourself off.' };
   if (p.pin != null) {
     var pin = pinText_(p.pin);
     if (!/^\d{4}$/.test(pin)) return { ok: false, error: 'PIN must be 4 digits.' };
@@ -199,7 +207,8 @@ function doGet(e) {
   var boxes = {};
   rows_('Boxes').forEach(function (r) { if (r[0]) boxes[r[0]] = { state: r[1] || 'full', net: r[2] || '', wo: r[3] || '', made: iso_(r[4]) || null, at: iso_(r[5]), by: r[6] || '' }; });
   var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
-  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, at: new Date().toISOString() });
+  var shelf = rows_('Put away').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
+  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, resetAt: resetAt_(), at: new Date().toISOString() });
 }
 function iso_(v) { return (v && typeof v.getTime === 'function') ? new Date(v.getTime()).toISOString() : (v ? String(v) : ''); }
 
@@ -216,12 +225,13 @@ function doPost(e) {
     if (body.action === 'admin') return json_(admin_(me, body));
     var scans = rows_('Scans'), seen = {}, mine = {};
     scans.slice(-2000).forEach(function (r) { seen[r[0]] = true; });
-    scans.slice(-500).forEach(function (r) { mine[r[0]] = String(r[3]); });
+    var when = {}, resetAt = resetAt_() ? new Date(resetAt_()).getTime() : 0;
+    scans.slice(-500).forEach(function (r) { mine[r[0]] = String(r[3]); when[r[0]] = r[1] ? new Date(r[1]).getTime() : 0; });
     var done = [], refused = [];
     (body.events || []).forEach(function (ev) {
       if (!ev || !ev.id) return;
       if (!seen[ev.id]) {
-        var why = allowed_(me, ev, mine);
+        var why = allowed_(me, ev, mine) || beforeReset_(ev, when, resetAt);
         if (why) { refused.push({ id: ev.id, type: ev.type, why: why }); done.push(ev.id); return; }
         if (ev.type === 'WORKER') ev.by = me.id; else ev.who = me.id; // the name on every scan is the person signed in
         apply_(ev, body.station || ''); seen[ev.id] = true; mine[ev.id] = me.id;
@@ -240,6 +250,15 @@ function allowed_(me, ev, mine) {
   if (ev.type === 'UNDO' && !atLeast_(me.level, 'Manager') && ev.undoes && mine[ev.undoes] !== me.id) return 'You can undo only your own scans.';
   return null;
 }
+
+// After a reset, scans made before it (a phone that was offline, or an undo of an old scan) must not bring old numbers back.
+function beforeReset_(ev, when, resetAt) {
+  if (!resetAt || ev.type === 'WORKER') return null;
+  if (ev.t && new Date(ev.t).getTime() < resetAt) return 'This scan was made before the inventory was reset, so it was not saved.';
+  if (ev.type === 'UNDO' && ev.undoes && when[ev.undoes] != null && when[ev.undoes] < resetAt) return 'That scan was before the reset, so it cannot be undone.';
+  return null;
+}
+function resetAt_() { return PropertiesService.getScriptProperties().getProperty('RESET_AT') || ''; }
 
 function apply_(ev, station) {
   var t = ev.t ? new Date(ev.t) : new Date();
@@ -297,8 +316,16 @@ function apply_(ev, station) {
     undo_(ev, t);
   } else if (ev.type === 'BOXCOUNT') {
     count_(ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id);
-  } else if (ev.type === 'BOXADD') {
-    countAdd_(ev.loc, ev.net, ev.netName, Number(ev.qty) || 0, false, t, ev.who, ev.id);
+  } else if (ev.type === 'BOXADD') { // put away: stock goes up now; the Put away tab keeps the number per box
+    var q = Number(ev.qty) || 0;
+    countAdd_(ev.loc, ev.net, ev.netName, q, false, t, ev.who, ev.id, 'Put away');
+    stock_(ev.net, ev.netName, q, 'add', 'Put away ' + (ev.loc || ''), t);
+    if (ev.loc && ev.loc !== 'TOP' && ev.loc !== '2F') {
+      var bx = findRow_('Boxes', ev.loc);
+      if (bx && bx.values[1] === 'empty') box_(ev.loc, 'full', ev.boxNet || '', '', '', t, ev.who);
+    }
+  } else if (ev.type === 'RESET') {
+    reset_(ev, t);
   } else if (ev.type === 'BOXSET') {
     box_(ev.loc, ev.state || 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'COUNTDONE') {
@@ -355,15 +382,18 @@ function undo_(ev, t) {
     if (r) count_(p[0], p[1], '', r.qty, t, ev.who, ev.id);
     else deleteWhere_('Counts', function (row) { return String(row[0]) === p[0] && String(row[1]) === p[1]; });
   });
-  var ca = ev.countsAdd || {}; // undo of a put away: take the nets back off, so adds from other phones are kept
+  var ca = ev.countsAdd || {}; // undo of a version 6 put away: take the nets back off, so adds from other phones are kept
   Object.keys(ca).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(ca[k].add) || 0, !!ca[k].drop, t, ev.who, ev.id); });
+  var pa = ev.putAdd || {}; // undo of a put away (version 7): the stock part comes back through ev.stock
+  Object.keys(pa).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(pa[k].add) || 0, !!pa[k].drop, t, ev.who, ev.id, 'Put away'); });
 }
 
 // Put away: add nets to a box (or TOP) count. Several phones can add to the same box at once.
 // drop = the row did not exist before this add, so remove it again when it goes back to 0.
-function countAdd_(box, net, name, add, drop, t, who, id) {
+function countAdd_(box, net, name, add, drop, t, who, id, tab) {
   if (!box || !net) return;
-  var sh = sheet_('Counts'), r = rows_('Counts');
+  tab = tab || 'Counts';
+  var sh = sheet_(tab), r = rows_(tab);
   for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) {
     var q = (Number(r[i][3]) || 0) + add;
     if (drop && q <= 0) { sh.deleteRow(i + 2); return; }
@@ -386,4 +416,22 @@ function count_(box, net, name, qty, t, who, id) {
 function deleteWhere_(name, test) {
   var sh = sheet_(name), r = rows_(name);
   for (var i = r.length - 1; i >= 0; i--) if (test(r[i])) sh.deleteRow(i + 2);
+}
+
+// Reset inventory to zero (Owner only). First a snapshot of every row that is cleared goes to the Snapshots tab,
+// then Stock, Boxes, Counts and Put away are emptied. The scan log (Scans) and Batches stay: history is never lost.
+function reset_(ev, t) {
+  var id = 'SNAP-' + Utilities.formatDate(t, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+  var snap = sheet_('Snapshots'), out = [];
+  ['Stock', 'Boxes', 'Counts', 'Put away'].forEach(function (name) {
+    rows_(name).forEach(function (r) { if (r[0] !== '') out.push([id, t, workerName_(ev.who), name, JSON.stringify(r)]); });
+  });
+  if (!out.length) out.push([id, t, workerName_(ev.who), '(nothing)', '']);
+  snap.getRange(snap.getLastRow() + 1, 1, out.length, 5).setValues(out);
+  ['Stock', 'Boxes', 'Counts', 'Put away'].forEach(function (name) {
+    var sh = sheet_(name); if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TABS[name].length).clearContent();
+  });
+  PropertiesService.getScriptProperties().setProperty('RESET_AT', t.toISOString());
+  var row = findRow_('Scans', ev.id);
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Inventory reset to zero · snapshot ' + id + ' (' + (out.length) + ' rows)' + (ev.reason ? ' · reason: ' + ev.reason : ''));
 }

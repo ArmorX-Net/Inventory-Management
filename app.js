@@ -42,7 +42,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       { id: 'EMP-04', name: 'Worker 4', role: 'Final finishing' },
       { id: 'EMP-05', name: 'Worker 5', role: 'Packing' },
       { id: 'EMP-06', name: 'Worker 6', role: 'Racks & dispatch' }
-    ], settings: { batchSize: '50x25' }, boxes: {}, counts: {}, demo: false };
+    ], settings: { batchSize: '50x25' }, boxes: {}, counts: {}, shelf: {}, demo: false };
   }
   var S;
   function load() {
@@ -50,6 +50,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (!S) { S = blank(); seedDemo(); }
     if (!S.boxes || S.layout !== window.LAYOUT_VERSION) { S.boxes = {}; S.layout = window.LAYOUT_VERSION; }
     S.counts = S.counts || {}; // box count (opening count): 'BOX|NET' -> { box, net, qty, at, by }
+    S.shelf = S.shelf || {}; // put away: how many went in each box (or TOP), 'BOX|NET' -> { box, net, qty, at, by }. Already in stock.
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
   function onHand(id) { return S.stock[id] || 0; }
@@ -218,6 +219,17 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   var app = document.getElementById('app');
   function h(html) { app.innerHTML = '<div class="view">' + html + '</div>'; }
 
+  // opening count on the dashboard: put aways are already in the totals above; box counts still wait for Apply
+  function countCard() {
+    var keys = Object.keys(S.shelf || {}), put = 0, top = 0, boxes = {}, nets = {}, today = 0;
+    keys.forEach(function (k) { var r = S.shelf[k], q = Number(r.qty) || 0; if (!q) return; nets[r.net] = 1; if (r.box === FLOOR2) top += q; else { put += q; boxes[r.box] = 1; } });
+    S.log.forEach(function (e) { if (e.type === 'BOXADD' && isToday(e.t) && !isUndone(e)) today += Number(e.qty) || 0; });
+    var waiting = Object.keys(S.counts || {}).length;
+    if (!keys.length && !waiting) return '';
+    return '<div class="card"><h3>Opening count</h3><div class="small">' +
+      (keys.length ? 'Put away so far: <b>' + put + '</b> nets in <b>' + Object.keys(boxes).length + '</b> boxes' + (top ? ' + <b>' + top + '</b> on top of the racks' : '') + ' (' + Object.keys(nets).length + ' kinds of net' + (today ? ', ' + today + ' put away today' : '') + '). These are already in the totals above.' : '') +
+      (waiting ? (keys.length ? '<br>' : '') + '<b>' + waiting + '</b> box counts are waiting: they change stock only after <a href="#stock">Stock → Box count → Review and apply</a>.' : '') + '</div></div>';
+  }
   function viewDashboard() {
     var total = 0, out = 0, low = 0;
     NETS.forEach(function (n) { var q = onHand(n.id); total += q; if (q <= 0) out++; else if (q <= n.refillAt) low++; });
@@ -244,6 +256,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="grid">' +
       kpi(total.toLocaleString(), 'Doornets on racks', '') + kpi(out, 'Nets out of stock', out ? 'bad' : 'ok') + kpi(low, 'Below refill level', low ? 'warn' : 'ok') +
       kpi(open.length + ' · ' + inProd, 'Batches · nets in production', '') + kpi(inToday, 'In today (rack-in + returns)', '') + kpi(outToday, 'Out today (orders + FBA)', '') + '</div>' +
+      countCard() +
       '<div class="card"><h3>Production board</h3><div class="tablewrap" style="border:none"><div class="board">' + cols + '</div></div><div class="small muted">Each card is one batch label. It moves one column each time someone scans it.</div></div>' +
       '<div class="grid2"><div class="card"><h3>Needs attention</h3><div class="tablewrap"><table><thead><tr><th>Net</th><th>Rack</th><th>On hand</th><th>Sells/day</th><th></th><th></th></tr></thead><tbody>' + (lowRows || '<tr><td colspan="6" class="muted">Everything is above its refill level.</td></tr>') + '</tbody></table></div></div>' +
       '<div class="card"><h3>Nets finished per person today</h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Step</th><th>Nets</th></tr></thead><tbody>' + wRows + '</tbody></table></div>' +
@@ -616,7 +629,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
   function remember(ev, r) {
-    var u = { id: ev.id, type: ev.type, t: ev.t, who: ev.who, what: undoWhat(ev), stock: r.stock || {}, batch: null, boxes: {}, counts: {}, countAdd: r.countAdd || {} };
+    var u = { id: ev.id, type: ev.type, t: ev.t, who: ev.who, what: undoWhat(ev), stock: r.stock || {}, batch: null, boxes: {}, counts: {}, countAdd: r.countAdd || {}, putAdd: r.putAdd || {} };
     if (r.batch) { var b = S.batches[r.batch.wo]; u.batch = { wo: r.batch.wo, prev: r.batch.prev, after: { stage: b.stage, loc: b.loc || null }, rej: 0 }; }
     Object.keys(r.boxes || {}).forEach(function (c) { u.boxes[c] = { prev: r.boxes[c], after: boxSig(S.boxes[c]) }; });
     Object.keys(r.counts || {}).forEach(function (k) { u.counts[k] = { prev: r.counts[k], after: S.counts[k] ? Number(S.counts[k].qty) : null }; });
@@ -626,6 +639,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var u = S.undo;
     if (!u || !sess.emp || u.who !== sess.emp) return null;
     if (Date.now() - new Date(u.t).getTime() > UNDO_MIN * 60000) return null;
+    if (S.resetAt && new Date(u.t) < new Date(S.resetAt)) return null; // the inventory was reset since then
     return u;
   }
   function undoConflict(u) { // someone else changed the same thing since: do not undo blindly
@@ -637,6 +651,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (bad.length) return 'box ' + bad.join(', ') + ' was changed since then';
     var low = Object.keys(u.countAdd || {}).filter(function (k) { return (S.counts[k] ? Number(S.counts[k].qty) : 0) < u.countAdd[k].add; });
     if (low.length) return 'that box count is lower now than what you added';
+    var lowP = Object.keys(u.putAdd || {}).filter(function (k) { return (S.shelf[k] ? Number(S.shelf[k].qty) : 0) < u.putAdd[k].add; });
+    if (lowP.length) return 'that box has fewer put away now than what you added';
     var badC = Object.keys(u.counts).filter(function (k) { return (S.counts[k] ? Number(S.counts[k].qty) : null) !== u.counts[k].after; });
     if (badC.length) return 'that box was counted again since then';
     var neg = Object.keys(u.stock).filter(function (id) { return onHand(id) + u.stock[id] < 0; });
@@ -703,21 +719,28 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (a.drop && q <= 0) delete S.counts[k]; else if (S.counts[k]) S.counts[k].qty = Math.max(0, q);
       ev.countsAdd[k] = { add: -a.add, drop: a.drop }; ev.loc = ev.loc || k.split('|')[0]; ev.net = ev.net || k.split('|')[1];
     });
+    if (Object.keys(u.putAdd || {}).length) ev.putAdd = {};
+    Object.keys(u.putAdd || {}).forEach(function (k) { // put away: take only these nets back off the box number (stock comes back above)
+      var a = u.putAdd[k], q = (S.shelf[k] ? Number(S.shelf[k].qty) : 0) - a.add;
+      if (a.drop && q <= 0) delete S.shelf[k]; else if (S.shelf[k]) S.shelf[k].qty = Math.max(0, q);
+      ev.putAdd[k] = { add: -a.add, drop: a.drop }; ev.loc = ev.loc || k.split('|')[0];
+    });
     S.log.forEach(function (e) { if (e.id === u.id && !isUndone(e)) { e.undone = true; e.note = (e.note || '') + ' · UNDONE'; } });
     S.undo = null; addLog(ev); save();
     var n = ev.net && BY_ID[ev.net];
-    fb('<b>Undone:</b> ' + esc(u.what) + '. Reason saved: ' + esc(reason) + '.' + (n && u.type !== 'BOXADD' ? ' ' + esc(netLabel(n)) + ' is ' + onHand(n.id) + ' in total.' : ''), 'ok');
+    fb('<b>Undone:</b> ' + esc(u.what) + '. Reason saved: ' + esc(reason) + '.' + (n ? ' ' + esc(netLabel(n)) + ' is ' + onHand(n.id) + ' in total.' : ''), 'ok');
     paint(); resumeMode();
   }
 
   // ---------- box count (opening count, day 14 full count): scan the shelf, type the number ----------
   function countKey(box, net) { return box + '|' + net; }
   // ---------- put away (opening count, net first): type the size, tap the color, the app says where it goes ----------
-  // The worker has a few nets of one size and color in hand. Each tap ADDS to that box's count, so many small trips add up.
-  var PA_V = 6; // Code.gs version that adds (BOXADD) instead of replacing
+  // The worker has a few nets of one size and color in hand. Each tap ADDS to stock straight away and to that box's number,
+  // so many small trips and several phones add up. No Apply step: the dashboard shows the new total at once.
+  var PA_V = 7; // Code.gs version where a put away (BOXADD) adds to stock straight away and keeps the number per box
   var SIZES = Array.from(new Set(NETS.map(function (n) { return n.size; })));
   function boxCap(c, id) { var b = BOXES[c]; return b ? (b.mix ? b.mix[id] : b.cap) : 0; }
-  function counted(c, id) { var r = S.counts[countKey(c, id)]; return r ? Number(r.qty) : 0; }
+  function counted(c, id) { var r = S.shelf[countKey(c, id)]; return r ? Number(r.qty) : 0; } // put away so far in that box
   function paBox(n) { var hs = homeOf(n); for (var i = 0; i < hs.length; i++) if (counted(hs[i], n.id) < boxCap(hs[i], n.id)) return hs[i]; return n.pick; } // first box with room
   function locHint(c) {
     var m = /^([A-Z])([LR])-C(\d)-R(\d)$/.exec(c); if (!m) return '';
@@ -788,12 +811,15 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function paAdd(q, top) {
     var n = BY_ID[sess.pa.net]; if (!n || !(q > 0)) return;
     if (q > 200) { fb('<b>' + q + '</b> is too many for one go. Type the number again.', 'bad'); return; }
-    var loc = top ? FLOOR2 : sess.pa.box, key = countKey(loc, n.id), prev = clone(S.counts[key] || null), tot = (prev ? Number(prev.qty) : 0) + q;
-    S.counts[key] = { box: loc, net: n.id, qty: tot, at: now(), by: sess.emp };
-    var ev = addLog({ type: 'BOXADD', who: sess.emp, net: n.id, qty: q, loc: loc, note: 'Put away +' + q + (top ? ' on top' : '') + ' (now ' + tot + ')' });
-    var ca = {}; ca[key] = { add: q, drop: !prev }; remember(ev, { countAdd: ca }); save();
+    var loc = top ? FLOOR2 : sess.pa.box, key = countKey(loc, n.id), prev = clone(S.shelf[key] || null), tot = (prev ? Number(prev.qty) : 0) + q;
+    var own = !top && BOXES[loc] && BOXES[loc].kind === 'own', pbx = !top && isEmpty(loc) ? snapBoxes([loc]) : {}, st = {}; st[n.id] = -q;
+    S.shelf[key] = { box: loc, net: n.id, qty: tot, at: now(), by: sess.emp };
+    S.stock[n.id] = onHand(n.id) + q;
+    if (!top && isEmpty(loc)) setBox(loc, { state: 'full', net: own ? n.id : '', wo: '', made: null });
+    var ev = addLog({ type: 'BOXADD', who: sess.emp, net: n.id, qty: q, loc: loc, boxNet: own ? n.id : '', note: 'Put away +' + q + (top ? ' on top' : '') + ' (now ' + tot + ' there, ' + onHand(n.id) + ' in total)' });
+    var pa = {}; pa[key] = { add: q, drop: !prev }; remember(ev, { stock: st, putAdd: pa, boxes: pbx }); save();
     var cap = top ? 0 : boxCap(loc, n.id), over = cap && tot > cap;
-    fb('Added <b>' + q + '</b> ' + esc(netLabel(n)) + ' → <b>' + esc(top ? 'top of the rack' : loc) + '</b>. Now ' + tot + ' there.' + (over ? ' That is more than the box was planned for (' + cap + '). Next ones can go on top.' : '') + ' <b>Next net:</b> type its size.', over ? 'warn' : 'ok');
+    fb('Added <b>' + q + '</b> ' + esc(netLabel(n)) + ' → <b>' + esc(top ? 'top of the rack' : loc) + '</b>. Now ' + tot + ' there, ' + onHand(n.id) + ' in stock.' + (over ? ' That is more than the box was planned for (' + cap + '). Next ones can go on top.' : '') + ' <b>Next net:</b> type its size.', over ? 'warn' : 'ok');
     sess.pa = { net: null, box: null, size: null, last: n.id }; sess.await = 'pasize'; sess.net = null;
     paDraw();
   }
@@ -929,7 +955,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="small">' + (rows.length ? '<b>' + p.done + ' of ' + p.total + '</b> boxes counted' + (p.floor ? ', ' + p.floor + ' nets on top of the racks' : '') + '. Counts change stock only when you press Apply.' : 'No box counts yet. On a phone: Scan station → <b>Count boxes</b>, scan each shelf label and type how many are in it. Scan <b>TOP</b> for the top of the racks.') + '</div>' +
       (open ? '<details class="small"' + (left.length && left.length <= 40 ? ' open' : '') + '><summary>' + left.length + ' boxes not counted yet</summary><div class="mono">' + (left.map(esc).join(' ') || 'none') + '</div></details>' +
         '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In system</th><th>Boxes</th><th>On top</th><th>New total</th><th>Change</th></tr></thead><tbody>' +
-        ready.map(function (x) { var d = x.total - onHand(x.n.id); return '<tr><td><span class="sw sw-' + x.n.color + '"></span>' + esc(netLabel(x.n)) + '</td><td>' + onHand(x.n.id) + '</td><td>' + x.racks + '</td><td>' + (x.fl ? x.floor : '<span class="muted">0</span>') + '</td><td><b>' + x.total + '</b></td><td>' + (d ? '<b>' + (d > 0 ? '+' : '') + d + '</b>' : '<span class="muted">same</span>') + '</td></tr>'; }).join('') +
+        ready.map(function (x) { var d = x.total - onHand(x.n.id); return '<tr><td><span class="sw sw-' + x.n.color + '"></span>' + esc(netLabel(x.n)) + '</td><td>' + onHand(x.n.id) + '</td><td>' + x.racks + '</td><td>' + (x.fl ? x.floor : '<span class="muted">not counted = 0</span>') + '</td><td><b>' + x.total + '</b></td><td>' + (d ? '<b>' + (d > 0 ? '+' : '') + d + '</b>' : '<span class="muted">same</span>') + '</td></tr>'; }).join('') +
         (part.length ? '<tr><td colspan="6" class="small"><b>Not applied yet (' + part.length + ' nets), boxes still to count:</b> ' + part.map(function (x) { return esc(netLabel(x.n)) + ' <code>' + esc(x.missing.join(' ')) + '</code>'; }).join(' · ') + '</td></tr>' : '') +
         '</tbody></table></div><div class="small muted">A net is applied when all its boxes are counted. Its count on top of the racks is added if one was entered, otherwise it counts as 0 on top. Boxes counted 0 are marked empty and go on the refill list. Part-full boxes are fine: the app keeps one total per net.</div>' +
         '<div class="row" style="justify-content:flex-end;align-items:flex-end"><span class="small muted" id="bcMsg"></span>' + (diff.length ? reasonSelect('bcWhy') : '') + '<button class="btn primary" id="bcApply"' + (ready.length ? '' : ' disabled') + '>Apply ' + ready.length + ' counts</button></div>' : '');
@@ -1083,7 +1109,12 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<form id="gsForm" class="row" style="align-items:flex-end"><label class="f" style="flex:1 1 360px">Web app link (ends with /exec)<input id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(S.settings.sheetUrl || ARMORX_SHEET.url) + '"></label>' +
       '<label class="f">This device<input id="gsStation" placeholder="e.g. Stitching PC" value="' + esc(S.settings.station || '') + '"></label>' +
       '<button class="btn primary">Save</button></form><div class="small" id="gsMsg">' + esc(syncText()) + '</div></div>' +
-      '<div class="card"><h3>Data on this device</h3><div class="small muted">The Google Sheet is the master copy. A backup file is a copy of what this device has.</div><div class="row"><button class="btn" id="bk">Download backup</button></div></div>');
+      '<div class="card"><h3>Data on this device</h3><div class="small muted">The Google Sheet is the master copy. A backup file is a copy of what this device has.</div><div class="row"><button class="btn" id="bk">Download backup</button></div></div>' +
+      (can('Owner') ? '<div class="card" id="resetCard"><h3>Reset inventory to zero <span class="small muted">(owner only)</span></h3><div class="small">Sets every net to 0 and clears box records (empty / has nets), box counts waiting for Apply and put-away numbers. ' +
+        'A snapshot of all of it is saved first (Snapshots tab of the Google Sheet). The scan log and production batches are kept, with a "Reset" line, so history is never lost. ' +
+        'Scans made before the reset on a phone that was offline are not saved, and older scans cannot be undone.</div>' +
+        '<div class="row" style="align-items:flex-end"><label class="f">Why (optional)<input id="rsWhy" maxlength="60" placeholder="e.g. testing, opening count"></label><label class="f">Type RESET to confirm<input id="rsTxt" autocomplete="off" autocapitalize="characters"></label>' +
+        '<button class="btn danger" id="rsGo">Reset to zero</button></div><div class="small" id="rsMsg"></div></div>' : ''));
     document.getElementById('gsForm').onsubmit = function (e) {
       e.preventDefault();
       var u = document.getElementById('gsUrl').value.trim();
@@ -1092,14 +1123,30 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       S.settings.sheetUrl = u; save(); document.getElementById('gsMsg').textContent = 'Saved. Checking the sheet…';
       pull().then(function () { var m = document.getElementById('gsMsg'); if (m) m.textContent = syncText(); });
     };
+    var rs = document.getElementById('rsGo'); if (rs) rs.onclick = function () { resetAll(document.getElementById('rsTxt').value, document.getElementById('rsWhy').value.trim(), document.getElementById('rsMsg')); };
     document.getElementById('bk').onclick = function () { var a = document.createElement('a'); var c = clone(S); delete c.auth; a.href = URL.createObjectURL(new Blob([JSON.stringify(c, null, 1)], { type: 'application/json' })); a.download = 'armorx-inventory-backup.json'; a.click(); };
   }
 
+  // Owner only (Code.gs checks it too): every net to 0, box records, waiting counts and put aways cleared. Snapshot first (in the sheet).
+  var RESET_V = 7;
+  function resetAll(typed, why, msg) {
+    if (!can('Owner')) { msg.textContent = 'Only the owner can reset the inventory.'; return; }
+    if (String(typed).trim().toUpperCase() !== 'RESET') { msg.textContent = 'Type RESET in the box to confirm.'; return; }
+    if (sheetOn() && (S.sheetV || 0) < RESET_V) { msg.textContent = 'The Google Sheet script is older than version ' + RESET_V + '. Paste the new google-sheet/Code.gs and deploy a new version first.'; return; }
+    var total = NETS.reduce(function (a, n) { return a + onHand(n.id); }, 0);
+    S.stock = {}; S.boxes = {}; S.counts = {}; S.shelf = {}; S.undo = null;
+    var ev = addLog({ type: 'RESET', who: sess.emp || S.auth.id, reason: why, note: 'Inventory reset to zero (was ' + total + ' nets)' + (why ? ' · reason: ' + why : '') });
+    S.resetAt = ev.t; save();
+    msg.textContent = 'Done. Every net is 0 now (it was ' + total + ' nets in total). A snapshot is saved in the Snapshots tab.';
+    document.getElementById('rsTxt').value = '';
+    toast('Inventory reset to zero.');
+  }
+
   // ---------- people (admin): who can sign in, their level, PIN ----------
-  var LEVEL_HELP = { Worker: 'scan, pick, refill, count boxes', Manager: '+ dashboard, stock, counts, batches, labels, scan log', Admin: '+ people, PINs, settings' };
+  var LEVEL_HELP = { Worker: 'scan, pick, refill, count boxes', Manager: '+ dashboard, stock, counts, batches, labels, scan log', Admin: '+ people, PINs, settings', Owner: '+ reset inventory to zero; only the owner can give or change the Owner level' };
   function viewPeople() {
     h('<h2>People</h2><div class="card"><div class="small muted">Everyone signs in with their employee number and their own 4-digit PIN. ' +
-      'Levels: <b>Worker</b> ' + esc(LEVEL_HELP.Worker) + '. <b>Manager</b> ' + esc(LEVEL_HELP.Manager) + '. <b>Admin</b> ' + esc(LEVEL_HELP.Admin) + '. ' +
+      'Levels: <b>Worker</b> ' + esc(LEVEL_HELP.Worker) + '. <b>Manager</b> ' + esc(LEVEL_HELP.Manager) + '. <b>Admin</b> ' + esc(LEVEL_HELP.Admin) + '. <b>Owner</b> ' + esc(LEVEL_HELP.Owner) + '. ' +
       'Someone left? Untick <b>Active</b>: they are signed out on every phone at once. A new PIN also signs that person out everywhere. ' +
       'You can do the same in the Workers tab of the Google Sheet (type the PIN in the New PIN column).</div>' +
       '<div class="tablewrap"><table><thead><tr><th>Badge</th><th>Name</th><th>Main step</th><th>Level</th><th>Active</th><th>PIN</th><th>Last sign-in</th></tr></thead><tbody id="pt"></tbody></table></div><div class="small" id="pMsg"></div></div>' +
@@ -1114,7 +1161,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
         return '<tr' + (w.active === false ? ' class="muted"' : '') + '><td><code>' + id + '</code></td>' +
           '<td><input class="pin-in" data-id="' + id + '" data-f="name" value="' + esc(w.name) + '"></td>' +
           '<td><input class="pin-in" data-id="' + id + '" data-f="role" value="' + esc(w.role || '') + '"></td>' +
-          '<td><select data-id="' + id + '" data-f="level">' + ['Worker', 'Manager', 'Admin'].map(function (l) { return '<option' + (w.level === l ? ' selected' : '') + '>' + l + '</option>'; }).join('') + '</select></td>' +
+          '<td><select data-id="' + id + '" data-f="level">' + (can('Owner') || w.level === 'Owner' ? ['Worker', 'Manager', 'Admin', 'Owner'] : ['Worker', 'Manager', 'Admin']).map(function (l) { return '<option' + (w.level === l ? ' selected' : '') + '>' + l + '</option>'; }).join('') + '</select></td>' +
           '<td><input type="checkbox" data-id="' + id + '" data-f="active"' + (w.active === false ? '' : ' checked') + ' aria-label="Active"></td>' +
           '<td>' + (w.locked ? '<b>Locked</b> <button class="btn" data-unlock="' + id + '">Unlock</button> ' : '') + (w.pin ? 'set' : '<b>not set</b>') + ' <button class="btn" data-pin="' + id + '">New PIN</button></td>' +
           '<td class="muted small">' + (w.last ? fmtT(w.last) : 'never') + '</td></tr>';
@@ -1149,7 +1196,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
 
   // ---------- sign-in ----------
   function signedIn() { return !!(S.auth && S.auth.t && Number(S.auth.exp) > Date.now()); }
-  var RANK = { Worker: 0, Manager: 1, Admin: 2 };
+  var RANK = { Worker: 0, Manager: 1, Admin: 2, Owner: 3 }; // Owner = everything an admin can do, plus reset to zero
   function can(need) { return signedIn() && (RANK[S.auth.level] || 0) >= (RANK[need] || 0); }
   function sheetUrl() { return (S.settings && S.settings.sheetUrl) || ARMORX_SHEET.url; }
   function sheetCall(body) {
@@ -1274,6 +1321,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (d.rates) Object.keys(d.rates).forEach(function (id) { if (BY_ID[id]) BY_ID[id].perDay = Number(d.rates[id]) || 0; });
     S.log = d.log || [];
     if (d.boxes && typeof d.boxes === 'object') { S.boxes = d.boxes; S.layout = window.LAYOUT_VERSION; }
+    if (Array.isArray(d.shelf)) { S.shelf = {}; d.shelf.forEach(function (c) { if (c.box && c.net) S.shelf[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
+    S.resetAt = d.resetAt || S.resetAt || '';
     if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by }; }); }
     S.sheetV = Number(d.v) || 0;
     if (d.me && S.auth && d.me.id === S.auth.id) { S.auth.name = d.me.name; S.auth.level = d.me.level; } // a level change by the admin shows at once
