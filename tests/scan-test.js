@@ -278,6 +278,48 @@ const STEPS = [
   expect('sign out: back to sign-in, employee number remembered', (await p2.inputValue('#siId')) === 'EMP-07' && await p2.isHidden('#tabs'));
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
+  // ---- background refresh (every 20 s, and once after opening the app) never wipes what someone is doing (owner, 12 Nov) ----
+  const ctx3 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p3 = await ctx3.newPage();
+  p3.on('pageerror', (e) => errors.push(e.message));
+  await p3.clock.install();
+  let gets3 = 0, slow = 0;
+  await p3.route(/script\.google\.com/, async (r) => {
+    const req = r.request();
+    if (req.method() === 'POST') { const b = JSON.parse(req.postData() || '{}'); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, saved: (b.events || []).map((e) => e.id), refused: [] }) }); }
+    gets3++;
+    if (slow) await new Promise((res) => setTimeout(res, slow));
+    return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, v: 8, me: { id: 'EMP-00', name: 'Owner', level: 'Owner' }, stock: { [NET]: gets3 }, batches: [], workers: [{ id: 'EMP-00', name: 'Owner', role: 'Owner', level: 'Owner', active: true, pin: true }, { id: 'EMP-07', name: 'Test Stitcher', role: 'Stitching', level: 'Worker', active: true, pin: true }], log: [], rates: {}, boxes: {}, counts: [], shelf: [], snaps: [], at: new Date().toISOString() }) });
+  });
+  const own = Object.assign({}, STATE, { settings: { batchSize: '50x25', sheetUrl: 'https://script.google.com/macros/s/TEST/exec' }, auth: { t: 'EMP-00.' + (Date.now() + 864e5) + '.sig', exp: Date.now() + 864e5, id: 'EMP-00', name: 'Owner', level: 'Owner' } });
+  await p3.addInitScript((s) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('armorx-inv-v1', s); sessionStorage.setItem('seeded', '1'); } }, JSON.stringify(own));
+  await p3.goto('file://' + path.join(__dirname, '..', 'index.html') + '#racks');
+  await p3.waitForSelector('[data-b="' + PICK + '"]'); await p3.clock.runFor(1000);
+  const tick = async () => { await p3.clock.runFor(21000); await p3.waitForTimeout(200); };
+  await p3.evaluate(() => { document.getElementById('sides').dataset.mark = '1'; });
+  await tick();
+  expect('refresh: the rack map redraws with new numbers when nobody is using it', !(await p3.$('#sides[data-mark]')));
+  await p3.click('[data-b="' + PICK + '"]'); await p3.fill('#bqQty', '12');
+  await tick();
+  expect('refresh: an open box with a typed number stays as it is', (await p3.inputValue('#bqQty')) === '12');
+  await p3.evaluate(() => { location.hash = 'stock'; }); await p3.waitForSelector('#cntMode');
+  await p3.click('#cntMode'); await p3.fill('#tb tr:first-child [data-k=r]', '7');
+  await tick();
+  expect('refresh: counts being typed on the Stock page stay', (await p3.inputValue('#tb tr:first-child [data-k=r]')) === '7' && !(await p3.$eval('#cntBar', (e) => e.hidden)));
+  await p3.click('#cntCancel');
+  await p3.evaluate(() => { location.hash = 'people'; }); await p3.waitForSelector('[data-pin="EMP-07"]');
+  await p3.click('[data-pin="EMP-07"]'); await p3.fill('td > .pin-in', '12');
+  await tick();
+  expect('refresh: a PIN being typed on People stays', (await p3.inputValue('td > .pin-in')) === '12');
+  // opening the app on a slow line: the first refresh comes back while the worker is already putting away
+  slow = 3000;
+  await p3.evaluate(() => { location.hash = 'scan'; }); await p3.reload(); await p3.waitForSelector('#scanIn');
+  await p3.fill('#scanIn', 'CMD-PUTAWAY'); await p3.press('#scanIn', 'Enter'); await p3.fill('#paSize', '210 9');
+  await p3.clock.runFor(4000); await p3.waitForTimeout(300);
+  expect('refresh after opening the app does not throw the scan station back to the start', (await p3.inputValue('#paSize').catch(() => 'GONE')) === '210 9');
+  await ctx3.close();
+  if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
+
   await browser.close();
   console.log(failed ? failed + ' FAILED' : 'All scan tests passed.');
   process.exit(failed ? 1 : 0);
