@@ -382,8 +382,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<li>Pick box empty: scan <b>EMPTY</b>, then the box. It goes on the refill list. (210×100 only: scan <b>SWAP</b> and the backup box you bring over.)</li>' +
       '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest batch on top of the racks, scan <b>REFILL</b> and the box.</li>' +
       '<li>Made a mistake? Tap <b>Undo my last scan</b> (or scan <b>UNDO</b>) within ' + UNDO_MIN + ' minutes and pick why.</li>' +
-      '<li>Putting nets on the racks (opening count): tap <b>Put away nets</b>, type the size (e.g. 210 90), tap the color. The app shows the box in big letters. Put the nets in and tap how many. It adds up, so come back with more any time.</li>' +
-      '<li>Opening count or day 14 count: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>TOP</b> for the top of the racks. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
+      '<li>Putting nets in: tap <b>IN</b>, type the size (e.g. 210 90), tap the color. The app shows the box in big letters. Put the nets in and tap how many.</li>' +
+      '<li>Taking nets out: tap <b>OUT</b>, type the size, tap the color. The app shows the box. Take the nets out and tap how many.</li>' +
+      '<li>Counting: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>TOP</b> for the top of the racks. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
@@ -415,8 +416,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       else if (sess.await === 'reason') p = 'Why is the count different? Tap a reason below';
       else if (sess.await === 'ureason') p = 'Why are you undoing it? Tap a reason below';
       else if (sess.await === 'bcnet') p = 'Top of racks: pick the size, then tap the color';
-      else if (sess.await === 'pasize') p = 'Put away: what net is in your hand?';
-      else if (sess.await === 'paqty') p = 'Put the nets in the box below, then tap how many';
+      else if (sess.await === 'pasize') p = paOut() ? 'OUT: which net are you taking out?' : 'IN: what net is in your hand?';
+      else if (sess.await === 'paqty') p = paOut() ? 'Take the nets out of the box below, then tap how many' : 'Put the nets in the box below, then tap how many';
       else if (sess.await === 'bcqty' && sess.bc) p = 'How many ' + esc(netLabel(sess.net)) + ' ' + esc(sess.bc.loc === FLOOR2 ? 'on top of the racks' : 'in ' + sess.bc.loc) + '? <span class="small">' + (sess.bc.nets.length > 1 ? 'Count only the ' + esc(sess.net.color) + ' bin · ' : '') + 'type the number (0 if none)</span>';
       else if (sess.await === 'qty') p = esc({ OUT: 'How many going out?', FBA: 'How many for FBA?', RETURN: 'How many returned?', DAMAGED: 'How many damaged?', COUNT: 'How many in total, racks plus top of racks?' }[sess.mode]) + ' <span class="small">' + esc(netLabel(sess.net)) + ' · type a number or scan QTY</span>';
       else if (sess.mode) p = esc(sess.mode + ' mode · ' + MODE_HELP[sess.mode]);
@@ -425,7 +426,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     document.getElementById('prompt').innerHTML = p;
     var acts = document.getElementById('acts');
     if (acts) acts.innerHTML = sess.emp ? '<div class="acts-h">' + (sess.mode ? 'Doing: <b>' + esc(ACTS[sess.mode]) + '</b> · tap again to stop' : 'What are you doing? Tap one, or just scan a box and the app will ask') + '</div><div class="acts-g">' +
-      actList().map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
+      actList().map(function (a) { return '<button type="button" class="act' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' +
+      '<div class="acts-io">' + ['PUTAWAY', 'TAKEOUT'].map(function (a) { return '<button type="button" class="act io' + (sess.mode === a ? ' on' : '') + '" data-act="' + a + '">' + esc(ACTS[a]) + '</button>'; }).join('') + '</div>' : '';
     var qb = document.getElementById('qbar');
     if (qb) qb.innerHTML = sess.await === 'qty' ? '<div class="qbtns">' + [1, 2, 3, 4, 5, 10, 20].map(function (q) { return '<button type="button" class="act" data-q="' + q + '">' + q + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>'
       : sess.await === 'bcqty' ? '<div class="qbtns">' + boxQtyButtons().map(function (q) { return '<button type="button" class="act" data-q="' + q[0] + '">' + esc(q[1]) + '</button>'; }).join('') + '<button type="button" class="act ghost" data-q="CMD-CANCEL">Cancel</button></div><div class="small" style="color:#cfd6db">Other number: type it in the box above and press Enter.</div>' : '';
@@ -439,8 +441,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (full) list.push([full, full + ' · full']);
     return list;
   }
-  var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count', BOXCOUNT: 'Count boxes', PUTAWAY: 'Put away nets' };
-  var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT', 'PUTAWAY', 'BOXCOUNT'];
+  var ACTS = { OUT: 'Pick for order', FBA: 'FBA shipment', SWAP: 'Swap backup down', REFILL: 'Refill box', EMPTY: 'Box is empty', RETURN: 'Customer return', DAMAGED: 'Return, damaged', COUNT: 'Count', BOXCOUNT: 'Count boxes', PUTAWAY: 'IN', TAKEOUT: 'OUT' };
+  var ACT_ORDER = ['OUT', 'SWAP', 'REFILL', 'EMPTY', 'FBA', 'RETURN', 'DAMAGED', 'COUNT', 'BOXCOUNT']; // IN and OUT (PUTAWAY, TAKEOUT) sit in their own big row below
   function actList() { return ACT_ORDER.filter(function (a) { return a !== 'COUNT' || can('Manager'); }); } // COUNT sets stock: managers only
   function boxActions(code, box, list) { // scan first, choose after: the actions that make sense for this box
     if (code === FLOOR2 || !box) return ['OUT', 'FBA', 'RETURN', 'COUNT'];
@@ -471,10 +473,12 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (code === 'CMD-CANCEL') { sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; sess.bc = null; fb('Cleared.', 'ok'); paint(); return; }
     if (!sess.emp) { fb('Scan your worker badge first, so the system knows who did this.', 'bad'); return; }
     if (code === 'CMD-UNDO') { startUndo(); return; }
-    var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY|BOXCOUNT|PUTAWAY)$/.exec(code);
+    var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY|BOXCOUNT|PUTAWAY|TAKEOUT)$/.exec(code);
     if (m && m[1] === 'COUNT' && !can('Manager')) { fb('Only a manager can change a count. To count boxes, tap <b>Count boxes</b>.', 'bad'); return; }
     if (m && m[1] === 'PUTAWAY' && sheetOn() && (S.sheetV || 0) < PA_V) { fb(OLD_SHEET + 'use Count boxes.', 'bad'); return; }
-    if (m && m[1] === 'PUTAWAY') { sess.mode = 'PUTAWAY'; sess.wo = null; sess.bc = null; fb('<b>Put away.</b> Type the size of the net in your hand, tap the color, and the app shows the box.', 'ok'); paStart(); return; }
+    if (m && m[1] === 'TAKEOUT' && !sheetV8()) { fb(OLD_SHEET + 'use Pick for order.', 'bad'); return; }
+    if (m && m[1] === 'PUTAWAY') { sess.mode = 'PUTAWAY'; sess.wo = null; sess.bc = null; fb('<b>IN.</b> Type the size of the net in your hand, tap the color, and the app shows the box.', 'ok'); paStart(); return; }
+    if (m && m[1] === 'TAKEOUT') { sess.mode = 'TAKEOUT'; sess.wo = null; sess.bc = null; fb('<b>OUT.</b> Type the size of the net you are taking out, tap the color, and the app shows the box.', 'ok'); paStart(); return; }
     if (m && m[1] === 'BOXCOUNT' && !sheetNew()) { fb(OLD_SHEET + 'use the count sheet on the Stock page.', 'bad'); return; }
     if (m) { sess.mode = m[1]; sess.await = null; sess.wo = null; sess.bc = null; fb(esc(m[1] === 'BOXCOUNT' ? 'BOX COUNT' : m[1]) + ' mode on. ' + esc(MODE_HELP[m[1]]) + (m[1] === 'BOXCOUNT' ? ' ' + countProgressText() : ''), 'ok'); paint(); return; }
     if (/reason$/.test(sess.await || '')) { fb('Tap a reason first, or scan CANCEL.', 'bad'); return; }
@@ -549,7 +553,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       save(); fb('<b>' + b.good + ' nets in</b> at <code>' + esc(code === FLOOR2 ? 'top of racks' : code) + '</code>. ' + esc(netLabel(n)) + ' now ' + onHand(n.id) + ' in total.', 'ok');
       sess.wo = null; sess.await = null; paint(); return;
     }
-    if (sess.mode === 'PUTAWAY') { paScan(code, box, list); return; }
+    if (paMode()) { paScan(code, box, list); return; }
     if (sess.mode === 'BOXCOUNT') { doBoxCount(code, box, list); return; }
     if (code === FLOOR2) {
       if (sess.mode === 'FBA') { fb('Top of racks. Now scan the product or a box label of the net going to FBA.', 'warn'); return; }
@@ -611,7 +615,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   }
   function applyQty(q, reason) {
     if (sess.await === 'bcqty' && sess.bc) { recordBoxCount(q); return; }
-    if (sess.mode === 'PUTAWAY') { if (sess.await === 'paqty') paAdd(q, false); else { fb('First type the size of the net in your hand, in the size box below.', 'warn'); paDraw(); } return; }
+    if (paMode()) { if (sess.await === 'paqty') paAdd(q, false); else { fb('First type the size of the net in your hand, in the size box below.', 'warn'); paDraw(); } return; }
     if (sess.await !== 'qty' || !sess.net) {
       var adjG = document.getElementById('adjGood');
       if (adjG) { adjG.value = q; document.getElementById('adjSave').click(); return; }
@@ -641,7 +645,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   // ---------- undo my last scan, reasons for count changes ----------
   var UNDO_MIN = 15; // a worker can undo their own last scan on this device for 15 minutes
   var UNDO_REASONS = ['Wrong box', 'Wrong number', 'Wrong net or color', 'Scanned twice', 'Other'];
-  var COUNT_REASONS = ['Opening count', 'Full count (day 14)', 'Picked without scanning', 'Found extra nets', 'Damaged, thrown out', 'Counted wrong before', 'Other'];
+  var COUNT_REASONS = ['Opening count', 'Full count', 'Picked without scanning', 'Found extra nets', 'Damaged, thrown out', 'Counted wrong before', 'Other'];
   var SHEET_V = 4; // Code.gs version that understands UNDO and box counts
   var OLD_SHEET = 'The Google Sheet script is an older version. Ask the manager to paste the new google-sheet/Code.gs and deploy a new version. Until then, ';
   function sheetNew() { return !sheetOn() || (S.sheetV || 0) >= SHEET_V; }
@@ -650,7 +654,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function boxSig(r) { return r ? (r.state || 'full') + '|' + (r.made || '') : 'none'; }
   function undoWhat(ev) {
     var n = BY_ID[ev.net];
-    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type === 'BOXADD' ? 'Put away +' + ev.qty : ev.type === 'BOXQTY' ? 'Box change ' + ev.was + ' → ' + ev.qty : ev.type, ev.qty != null && ev.type !== 'STAGE' && ev.type !== 'BOXADD' && ev.type !== 'BOXQTY' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
+    return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box count' : ev.type === 'BOXADD' ? 'IN +' + ev.qty : ev.type === 'BOXQTY' ? 'Box change ' + ev.was + ' → ' + ev.qty : ev.type, ev.qty != null && ev.type !== 'STAGE' && ev.type !== 'BOXADD' && ev.type !== 'BOXQTY' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
   }
   // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
   function remember(ev, r) {
@@ -698,8 +702,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       document.getElementById('whyOk').onclick = ok; t.onkeydown = function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); ok(); } }; t.focus();
     }; });
   }
-  function resumeMode() { // after an undo or a cancelled undo, put away carries on where it was
-    if (sess.mode !== 'PUTAWAY') return;
+  function resumeMode() { // after an undo or a cancelled undo, IN / OUT carries on where it was
+    if (!paMode()) return;
     if (!sess.pa) { paStart(); return; }
     sess.await = sess.pa.net ? 'paqty' : 'pasize'; paDraw();
   }
@@ -799,9 +803,15 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var m = /^([A-Z])([LR])-C(\d)-R(\d)$/.exec(c); if (!m) return '';
     return 'Rack ' + m[1] + ' · ' + (m[2] === 'L' ? 'left' : 'right') + ' side · column ' + m[3] + ' · row ' + m[4] + (m[4] === '1' ? ' (floor)' : m[4] === '5' ? ' (top row)' : '');
   }
+  function paMode() { return sess.mode === 'PUTAWAY' || sess.mode === 'TAKEOUT'; }
+  function paOut() { return sess.mode === 'TAKEOUT'; } // OUT: same steps as IN, but the nets come out of the box
+  function outBox(n) { // OUT: the pick box if it has nets, else the first box of this net that has nets
+    var hs = homeOf(n), has = hs.filter(function (c) { return counted(c, n.id) > 0; });
+    return has.indexOf(n.pick) >= 0 ? n.pick : has[0] || n.pick;
+  }
   function paStart() { sess.pa = { net: null, box: null, size: null, last: (sess.pa || {}).last || null }; sess.await = 'pasize'; paDraw(); }
   function paDraw() {
-    var adj = document.getElementById('adjust'); if (!adj || sess.mode !== 'PUTAWAY') return;
+    var adj = document.getElementById('adjust'); if (!adj || !paMode()) return;
     var pa = sess.pa || {}; paint();
     if (!pa.net) {
       var last = pa.last && BY_ID[pa.last];
@@ -823,7 +833,15 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     } else {
       var n = BY_ID[pa.net], c = pa.box, have = counted(c, n.id), cap = boxCap(c, n.id), top = counted(FLOOR2, n.id), bin = BOXES[c] && BOXES[c].kind === 'bin';
       var others = homeOf(n).filter(function (x) { return x !== c; });
-      adj.innerHTML = '<div class="pa pa-card"><div class="pa-net"><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n).replace('x', ' × ')) + '</div>' +
+      if (paOut()) adj.innerHTML = '<div class="pa pa-card pa-outc"><div class="pa-net"><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n).replace('x', ' × ')) + '</div>' +
+        '<div class="pa-go">Take it out of box</div><div class="pa-loc">' + esc(c) + '</div><div class="pa-hint">' + esc(locHint(c)) + (bin ? ' · <b>' + esc(n.color) + ' bin</b> of a 3-bin box' : '') + '</div>' +
+        '<div class="pa-have">In this box now: <b>' + have + '</b>' + (top ? ' · on top: ' + top : '') + ' · ' + onHand(n.id) + ' in stock</div>' +
+        '<div class="pa-step">How many did you take out?</div><div class="qbtns">' + [1, 2, 3, 4, 5, 10].map(function (q) { return '<button type="button" class="act pa-add" data-pa-add="' + q + '">−' + q + '</button>'; }).join('') + '</div>' +
+        '<div class="qtyrow"><label class="f">Other number<input id="paQty" type="number" min="1" inputmode="numeric"></label><button type="button" class="btn primary" data-pa-other="1">Take out</button></div>' +
+        '<div class="pa-step">Taken from the top of the rack instead:</div><div class="qbtns">' + [1, 2, 3, 5, 10].map(function (q) { return '<button type="button" class="act ghost" data-pa-top="' + q + '">Top −' + q + '</button>'; }).join('') + '</div>' +
+        (others.length ? '<div class="small" style="color:#cfd6db">Other boxes: ' + others.map(function (x) { return '<button type="button" class="linkbtn" data-pa-box="' + x + '">' + esc(x) + ' (' + counted(x, n.id) + ')</button>'; }).join(' ') + '</div>' : '') +
+        '<button type="button" class="act ghost" data-pa-back="1">Choose another net</button></div>';
+      else adj.innerHTML = '<div class="pa pa-card"><div class="pa-net"><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n).replace('x', ' × ')) + '</div>' +
         '<div class="pa-go">Put it in box</div><div class="pa-loc">' + esc(c) + '</div><div class="pa-hint">' + esc(locHint(c)) + (bin ? ' · <b>' + esc(n.color) + ' bin</b> of a 3-bin box' : '') + '</div>' +
         '<div class="pa-have">In this box now: <b>' + have + '</b>' + (cap ? ' · room for ' + cap : '') + (have >= cap && cap ? ' · <b>box is full</b>' : '') + (top ? ' · on top: ' + top : '') + '</div>' +
         '<div class="pa-step">How many did you put in?</div><div class="qbtns">' + [1, 2, 3, 4, 5, 10].map(function (q) { return '<button type="button" class="act pa-add" data-pa-add="' + q + '">+' + q + '</button>'; }).join('') + '</div>' +
@@ -843,26 +861,39 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       else if (d.paAdd) paAdd(+d.paAdd, false);
       else if (d.paTop) paAdd(+d.paTop, true);
       else if (d.paBox) { sess.pa.box = d.paBox; paDraw(); }
-      else if (d.paOther) { var v = parseInt(document.getElementById('paQty').value, 10); if (v > 0) paAdd(v, false); else toast('Type how many you put in.'); }
+      else if (d.paOther) { var v = parseInt(document.getElementById('paQty').value, 10); if (v > 0) paAdd(v, false); else toast(paOut() ? 'Type how many you took out.' : 'Type how many you put in.'); }
       if (!TOUCH) refocus();
     };
   }
   function paChoose(n, box) {
-    sess.pa.net = n.id; sess.pa.size = null; sess.pa.box = box || paBox(n); sess.await = 'paqty'; sess.net = n;
-    fb('Put the ' + esc(netLabel(n)) + ' nets in <b>' + esc(sess.pa.box) + '</b>, then tap how many.', 'ok');
+    sess.pa.net = n.id; sess.pa.size = null; sess.pa.box = box || (paOut() ? outBox(n) : paBox(n)); sess.await = 'paqty'; sess.net = n;
+    fb((paOut() ? 'Take the ' + esc(netLabel(n)) + ' nets out of <b>' : 'Put the ' + esc(netLabel(n)) + ' nets in <b>') + esc(sess.pa.box) + '</b>, then tap how many.', 'ok');
     paDraw(); showOnPhone('adjust');
   }
   function paScan(code, box, list) { // scanning the shelf is optional: it confirms the box, or picks the net from the shelf
     if (code === FLOOR2) { fb(sess.pa && sess.pa.net ? 'For the top of the rack, tap a <b>Top +</b> button.' : 'First type the size of the net in your hand.', 'warn'); paDraw(); return; }
     if (!box) { fb('That is not a shelf label.', 'bad'); paDraw(); return; }
     var n = sess.pa && sess.pa.net && BY_ID[sess.pa.net];
-    if (n && homeOf(n).indexOf(code) >= 0) { sess.pa.box = code; fb('✓ Right box: <b>' + esc(code) + '</b>. Now tap how many you put in.', 'ok'); paDraw(); return; }
+    if (n && homeOf(n).indexOf(code) >= 0) { sess.pa.box = code; fb('✓ Right box: <b>' + esc(code) + '</b>. Now tap how many you ' + (paOut() ? 'took out.' : 'put in.'), 'ok'); paDraw(); return; }
     if (n) { fb('<b>Wrong box.</b> ' + esc(code) + ' is for ' + esc(list.length > 1 ? list[0].size + ' (3 bins)' : netLabel(list[0])) + '. ' + esc(netLabel(n)) + ' goes in <b>' + esc(sess.pa.box) + '</b>.', 'bad'); paDraw(); return; }
     if (list.length === 1) { paChoose(list[0], code); return; }
     sess.pa.size = list[0].size; paDraw(); fb(esc(code) + ' is a 3-bin box for ' + esc(list[0].size) + '. Tap the color.', 'ok');
   }
+  function paTake(q, top) { // OUT: nets come out of a box (or the top of the rack); stock goes down at once
+    var n = BY_ID[sess.pa.net], before = onHand(n.id), loc = top ? FLOOR2 : sess.pa.box;
+    if (q > before) { fb('Only <b>' + before + '</b> ' + esc(netLabel(n)) + ' in stock. Check the number, or ask the manager to count it.', 'bad'); return; }
+    S.stock[n.id] = before - q;
+    var ev = addLog({ type: 'OUT', who: sess.emp, net: n.id, qty: q, loc: loc, note: 'OUT −' + q + ' from ' + (top ? 'top of rack' : loc) });
+    var sa = shelfAdd(loc, n.id, -q, true), spa = {}; if (sa && sa.add) spa[sa.key] = sa;
+    var st = {}; st[n.id] = q; remember(ev, { stock: st, putAdd: spa }); save();
+    var left = counted(loc, n.id), warn = onHand(n.id) <= n.refillAt;
+    fb('Took out <b>' + q + '</b> ' + esc(netLabel(n)) + ' from <b>' + esc(top ? 'top of the rack' : loc) + '</b>. ' + (S.shelf[countKey(loc, n.id)] ? left + ' left there, ' : '') + onHand(n.id) + ' in stock.' + (warn ? ' <b>Running low.</b>' : '') + ' <b>Next net:</b> type its size.', warn ? 'warn' : 'ok');
+    sess.pa = { net: null, box: null, size: null, last: n.id }; sess.await = 'pasize'; sess.net = null;
+    paDraw();
+  }
   function paAdd(q, top) {
     var n = BY_ID[sess.pa.net]; if (!n || !(q > 0)) return;
+    if (paOut()) { if (q > 200) { fb('<b>' + q + '</b> is too many for one go. Type the number again.', 'bad'); return; } paTake(q, top); return; }
     if (q > 200) { fb('<b>' + q + '</b> is too many for one go. Type the number again.', 'bad'); return; }
     var loc = top ? FLOOR2 : sess.pa.box, key = countKey(loc, n.id), prev = clone(S.shelf[key] || null), tot = (prev ? Number(prev.qty) : 0) + q;
     var own = !top && BOXES[loc] && BOXES[loc].kind === 'own', pbx = !top && isEmpty(loc) ? snapBoxes([loc]) : {}, st = {}; st[n.id] = -q;
@@ -1006,7 +1037,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var ready = rows.filter(function (x) { return !x.missing.length; }), part = rows.filter(function (x) { return x.missing.length; });
     var diff = ready.filter(function (x) { return x.total !== onHand(x.n.id); });
     var left = Object.keys(BOXES).filter(function (c) { return !boxCounted(c); }).sort(sideOrder);
-    el.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><h3>Box count <span class="small muted">(opening count, day 14 count)</span></h3>' + (rows.length ? '<button class="btn" id="bcOpen">' + (open ? 'Hide' : 'Review and apply') + '</button>' : '') + '</div>' +
+    el.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><h3>Box count</h3>' + (rows.length ? '<button class="btn" id="bcOpen">' + (open ? 'Hide' : 'Review and apply') + '</button>' : '') + '</div>' +
       '<div class="small">' + (rows.length ? '<b>' + p.done + ' of ' + p.total + '</b> boxes counted' + (p.floor ? ', ' + p.floor + ' nets on top of the racks' : '') + '. Counts change stock only when you press Apply.' : 'No box counts yet. On a phone: Scan station → <b>Count boxes</b>, scan each shelf label and type how many are in it. Scan <b>TOP</b> for the top of the racks.') + '</div>' +
       (open ? '<details class="small"' + (left.length && left.length <= 40 ? ' open' : '') + '><summary>' + left.length + ' boxes not counted yet</summary><div class="mono">' + (left.map(esc).join(' ') || 'none') + '</div></details>' +
         '<div class="tablewrap"><table><thead><tr><th>Net</th><th>In system</th><th>Boxes</th><th>On top</th><th>New total</th><th>Change</th></tr></thead><tbody>' +

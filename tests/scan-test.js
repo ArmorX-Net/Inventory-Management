@@ -171,6 +171,22 @@ const STEPS = [
   await page.click('.pa-same');
   expect('a full box sends the next nets to the next box with room', (await page.textContent('.pa-loc')) === 'AR-C1-R1');
   await scan('CMD-CANCEL');
+  // OUT: same steps as IN, the nets come out of the box
+  expect('IN and OUT are the two big buttons at the bottom', (await page.$$eval('.acts-io .act.io', (a) => a.map((b) => b.textContent).join(','))) === 'IN,OUT');
+  const outBefore = (await st()).stock[PA];
+  await page.click('[data-act="TAKEOUT"]');
+  expect('OUT asks for the size', (await fbText()).includes('OUT') && !!(await page.$('#paSize')));
+  await page.fill('#paSize', '2109'); await page.click('[data-pa-size="210x90"]'); await page.click('[data-pa-net="' + PA + '"]');
+  expect('OUT shows the box that has the nets', (await page.textContent('.pa-loc')) === PA_BOX && (await page.textContent('.pa-go')).includes('Take it out'));
+  await page.click('[data-pa-add="2"]');
+  S = await st();
+  expect('OUT 2: box 5 -> 3, stock down 2, logged as OUT with the box', (await fbText()).includes('Took out 2') && S.shelf[PA_BOX + '|' + PA].qty === 3 && S.stock[PA] === outBefore - 2 && S.log[0].type === 'OUT' && S.log[0].loc === PA_BOX);
+  await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
+  S = await st();
+  expect('undo OUT puts the 2 back in the box and in stock', S.shelf[PA_BOX + '|' + PA].qty === 5 && S.stock[PA] === outBefore && !!(await page.$('#paSize')));
+  await page.click('.pa-same'); await page.fill('#paQty', '150'); await page.press('#paQty', 'Enter');
+  expect('OUT more than in stock is refused', (await fbText()).includes('in stock') && (await st()).stock[PA] === outBefore);
+  await scan('CMD-CANCEL');
   await page.evaluate(() => { location.hash = 'dashboard'; }); await page.waitForTimeout(150);
   expect('dashboard shows the put aways so far', (await page.textContent('#app')).includes('Put away so far'));
 
