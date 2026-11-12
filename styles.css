@@ -310,3 +310,8 @@ details.pv[open]>summary{margin-bottom:8px}
   #print-area .rs-foot{font-size:10pt}
   #print-area .rs-t th,#print-area .rs-t td{background:#fff !important}
 }
+
+/* IN and OUT: the two big buttons at the bottom of the action list (owner, 12 Nov 2026) */
+.acts-io{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.act.io{font-family:var(--f-display);font-weight:800;font-size:2.2rem;letter-spacing:.06em;min-height:76px;border-width:3px;border-color:#fff}
+.act.io.on{border-color:var(--tag)}
