@@ -1418,7 +1418,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       }).catch(function () { msg.textContent = 'No internet: not saved. Try again.'; });
     }
     draw();
-    if (sheetOn()) pull().then(function (c) { if (c && location.hash === '#people') draw(); });
+    if (sheetOn()) pull().then(function (c) { if (c && location.hash === '#people' && !userBusy()) draw(); }); // never wipe a PIN or name being typed
     document.getElementById('pAdd').onsubmit = function (e) {
       e.preventDefault();
       var pin = document.getElementById('paPin').value;
@@ -1577,12 +1577,24 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
         .catch(function (err) { syncState.err = err.message || 'offline'; return false; });
     }).then(function (changed) { paintSync(); return changed; });
   }
-  setInterval(function () {
-    pull().then(function (changed) {
-      var k = (location.hash || '#dashboard').slice(1);
-      if (changed && ['dashboard', 'stock', 'racks', 'refill', 'log'].indexOf(k) >= 0) route();
+  // Is the person in the middle of something on this page? Then a background refresh must not redraw it:
+  // a typed number, an open form, a preview or an open box would be lost (owner, 12 Nov 2026).
+  function userBusy() {
+    var a = document.activeElement;
+    if (a && app.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && a.id !== 'scanIn') return true;
+    var typed = Array.prototype.some.call(app.querySelectorAll('input, textarea'), function (i) {
+      return i.type !== 'file' && i.type !== 'checkbox' && i.id !== 'scanIn' && i.id !== 'q' && i.id !== 'rq' && i.value !== i.defaultValue;
     });
-  }, 20000);
+    var picked = Array.prototype.some.call(app.querySelectorAll('select'), function (sel) { var o = sel.options[sel.selectedIndex]; return o && !o.defaultSelected && sel.selectedIndex !== 0; });
+    return typed || picked || !!app.querySelector('#cntBar:not([hidden]), #bcApply, #xlPrev table, #snOut table, #boxInfo table, [data-pin] + input, td > .pin-in');
+  }
+  // Pages that only show numbers are redrawn when new data comes in; the scan station and forms are never redrawn by it.
+  var LIVE_PAGES = ['dashboard', 'stock', 'racks', 'refill', 'log'];
+  function refreshPage() {
+    var k = (location.hash || '#dashboard').slice(1);
+    if (LIVE_PAGES.indexOf(k) >= 0 && !userBusy()) route();
+  }
+  setInterval(function () { pull().then(function (changed) { if (changed) refreshPage(); }); }, 20000);
 
   // ---------- router ----------
   var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, log: viewLog, people: viewPeople, settings: viewSettings };
@@ -1612,6 +1624,6 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   document.getElementById('soBtn').onclick = function () { signOut(); };
   if (signedIn()) { sess.emp = S.auth.id; S.settings.me = S.auth.id; if (!worker(S.auth.id)) S.workers.push({ id: S.auth.id, name: S.auth.name, role: '' }); }
   if (!location.hash && TOUCH) history.replaceState(null, '', location.pathname + location.search + '#scan');
-  route(); if (sheetOn() && signedIn()) pull().then(function (c) { if (c) route(); });
+  route(); if (sheetOn() && signedIn()) pull().then(function (c) { if (c) refreshPage(); });
   window.ArmorX = { handle: handle, state: function () { return S; } };
 })();
