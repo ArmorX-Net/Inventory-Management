@@ -265,3 +265,48 @@ details.pv[open]>summary{margin-bottom:8px}
 .act.pa-add{font-size:1.3rem;min-height:56px}
 .linkbtn{font:inherit;background:none;border:none;color:var(--tag);text-decoration:underline;cursor:pointer;padding:0 4px}
 @media (max-width:600px){.pa-loc{font-size:2.6rem}}
+
+/* big side sign: one per A4 landscape page (owner, 12 Nov 2026) */
+@media print{
+  #print-area .sign.big{width:277mm;height:188mm;margin:0;padding:10mm 14mm;gap:14mm;justify-content:center;border-width:2mm;break-after:page;page-break-after:always}
+  #print-area .sign.big:last-child{break-after:auto;page-break-after:auto}
+  #print-area .sign.big .sg-side{font-size:330pt;padding:4mm 10mm}
+  #print-area .sign.big .sg-rng{font-size:100pt;white-space:nowrap}
+  #print-area .sign.big .sg-rng span{font-size:44pt}
+  #print-area .sign.big .sg-star{font-size:28pt}
+}
+/* rack layout sheet: one A4 landscape page per side, black only */
+.rsheet-preview{overflow-x:auto}
+.rsheet{background:#fff;color:#000;font-family:Arial,sans-serif;padding:8px;min-width:560px}
+.rs-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+.rs-side{background:#000;color:#fff;font-family:var(--f-display);font-weight:700;font-size:28pt;line-height:1;padding:4px 12px}
+.rs-rng{font-family:var(--f-display);font-weight:700;font-size:18pt}
+.rs-star{border:2px solid #000;font-weight:700;padding:2px 8px}
+.rs-t{width:100%;border-collapse:collapse;table-layout:fixed}
+.rs-t th,.rs-t td{border:2px solid #000;text-align:center;padding:4px 2px;vertical-align:middle;overflow-wrap:anywhere}
+.rs-t thead th{font-size:13pt}
+.rs-t tbody th{width:44px;font-size:13pt}
+.rs-t th small{display:block;font-size:7pt;font-weight:400}
+.rs-t td.bkp{border-style:dashed}
+.rs-t td.free{font-style:italic}
+.rs-sz{font-family:var(--f-display);font-weight:700;font-size:15pt;line-height:1.1;white-space:nowrap}
+.rs-col{font-size:9pt;font-weight:700;line-height:1.15}
+.rs-code{font-size:7.5pt}
+.rs-bins{font-size:7pt}
+.rs-foot{font-size:8pt;margin-top:6px}
+@media print{
+  #print-area .rsheet{width:277mm;height:188mm;box-sizing:border-box;padding:0;min-width:0;overflow:hidden;break-after:page;page-break-after:always}
+  #print-area .rsheet:last-child{break-after:auto;page-break-after:auto}
+  #print-area .rs-side{background:#000 !important;color:#fff !important;font-size:44pt}
+  #print-area .rs-rng{font-size:28pt}
+  #print-area .rs-star{font-size:14pt}
+  #print-area .rs-t thead th{font-size:18pt;height:10mm}
+  #print-area .rs-t tbody th{width:16mm;font-size:18pt}
+  #print-area .rs-t td{height:25mm}
+  #print-area .rs-bins{font-size:9pt}
+  #print-area .rs-sz{font-size:28pt}
+  #print-area .rs-col{font-size:13pt}
+  #print-area .rs-code{font-size:10pt}
+  #print-area .rs-foot{font-size:10pt}
+  #print-area .rs-t th,#print-area .rs-t td{background:#fff !important}
+}

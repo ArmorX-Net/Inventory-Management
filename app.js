@@ -185,10 +185,33 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     barcode(el.querySelector('.bc'), FLOOR2, null, '10mm');
     return el;
   }
-  function sideSign(side) { // rack side sign: big side code + size range, 3 per A4 page, cut and laminate
-    var rg = (window.SIDE_RANGES || {})[side] || ['', ''], el = document.createElement('div'); el.className = 'sign';
+  function sideSign(side, big) { // rack side sign: big side code + size range, 3 per A4 page (or one per A4 landscape when big), cut and laminate
+    var rg = (window.SIDE_RANGES || {})[side] || ['', ''], el = document.createElement('div'); el.className = 'sign' + (big ? ' big' : '');
     el.innerHTML = '<div class="sg-side' + (/R$/.test(side) ? ' r' : '') + '">' + esc(side) + '</div><div class="sg-body"><div class="sg-rng"><div>' + esc(rg[0].replace('x', '×')) + ' <span>to</span></div><div>' + esc(rg[1].replace('x', '×')) + '</div></div>' +
       (side === 'AR' ? '<div class="sg-star">★ 210×100: C1–C3, pick R3</div>' : '') + '</div>';
+    return el;
+  }
+  // rack layout sheet: one A4 landscape page per rack side, a picture of every box (C1-C6 left to right, R5 on top, R1 = floor)
+  var CNAME = { BK: 'Black', BR: 'Brown', GR: 'Grey' };
+  function rackSheet(side) {
+    var COLS = window.RACK_COLS || 6, rg = (window.SIDE_RANGES || {})[side] || ['', ''], el = document.createElement('div'); el.className = 'rsheet';
+    var t = '<div class="rs-h"><span class="rs-side">' + esc(side) + '</span><span class="rs-rng">' + esc(rg[0].replace('x', '×')) + ' to ' + esc(rg[1].replace('x', '×')) + '</span>' +
+      (side === 'AR' ? '<span class="rs-star">★ 210×100: C1–C3, pick from R3</span>' : '') + '</div><table class="rs-t"><thead><tr><th></th>';
+    for (var c = 1; c <= COLS; c++) t += '<th>C' + c + '</th>';
+    t += '</tr></thead><tbody>';
+    for (var r = 5; r >= 1; r--) {
+      t += '<tr><th>R' + r + (r === 1 ? '<small>floor</small>' : '') + '</th>';
+      for (var c2 = 1; c2 <= COLS; c2++) {
+        var code = side + '-C' + c2 + '-R' + r, bx = BOXES[code];
+        if (!bx) { t += '<td class="free">free</td>'; continue; }
+        var list = netsAt(code), n = list[0];
+        t += '<td class="' + (bx.role === 'backup' ? 'bkp' : '') + '"><div class="rs-sz">' + esc(n.size.replace('x', '×')) + '</div>' +
+          (bx.kind === 'bin' ? '<div class="rs-col">3 bins<div class="rs-bins">Black · Brown · Grey</div></div>' : '<div class="rs-col">' + esc(n.color) + '</div>') +
+          '<div class="rs-code">' + esc(code) + (bx.role === 'backup' ? ' · <b>BACKUP</b>' : '') + '</div></td>';
+      }
+      t += '</tr>';
+    }
+    el.innerHTML = t + '</tbody></table><div class="rs-foot">ArmorX door nets · side ' + esc(side) + '. C1 to C6 left to right as you face this side. R1 is the floor row. Colors always Black, Brown, Grey left to right. Extra stock goes on top of the racks (TOP).</div>';
     return el;
   }
   function badgeLabel(w) {
@@ -1285,13 +1308,19 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels and box tags (also 50 × 25 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Worker badges</h3><button class="btn primary" id="pW">Print all badges</button></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevW"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the TOP label (extra stock on top of the racks).</div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevC"></div></details></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs (3 per A4)</h3><button class="btn primary" id="pS">Print all 6 signs (2 pages)</button></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Prints 3 per A4 page, portrait. Cut along the borders and laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="sSide"><option value="">All 6 sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pSB">Big: 1 per A4 landscape</button><button class="btn" id="pS">Small: 3 per A4</button></div></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Big prints one sign on a whole A4 page, landscape. Small prints 3 per A4 page, portrait: cut along the borders. Laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Rack layout sheet</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="rSide"><option value="">All 6 sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pR">Print layout</button></div></div><div class="small muted">A picture of each rack side with the size and color of every box, one A4 landscape page per side. Give it to whoever puts the boxes on the racks.</div><details class="pv"><summary>Show preview</summary><div class="rsheet-preview" id="prevR"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Shelf labels</h3><div class="row" style="align-items:flex-end"><label class="f">Side<select id="pSide">' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pL">Print this side</button></div></div><div class="small muted" id="cntL"></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevL"></div></details></div>');
     S.workers.forEach(function (w) { document.getElementById('prevW').appendChild(badgeLabel(w)); });
     COMMANDS.forEach(function (c) { document.getElementById('prevC').appendChild(cmdLabel(c)); });
     document.getElementById('prevC').appendChild(floorLabel());
     sides.slice(0, 2).forEach(function (sd) { document.getElementById('prevS').appendChild(sideSign(sd)); });
-    document.getElementById('pS').onclick = function () { printLabels(sides.map(sideSign), 'A4P'); };
+    function pickSides(id) { var v = document.getElementById(id).value; return v ? [v] : sides; }
+    document.getElementById('pS').onclick = function () { printLabels(pickSides('sSide').map(function (sd) { return sideSign(sd); }), 'A4P'); };
+    document.getElementById('pSB').onclick = function () { printLabels(pickSides('sSide').map(function (sd) { return sideSign(sd, true); }), 'A4'); };
+    function drawR() { var el = document.getElementById('prevR'); el.innerHTML = ''; el.appendChild(rackSheet(pickSides('rSide')[0])); }
+    document.getElementById('rSide').onchange = drawR; drawR();
+    document.getElementById('pR').onclick = function () { printLabels(pickSides('rSide').map(rackSheet), 'A4'); };
     function codesFor(side) { return Object.keys(BOXES).filter(function (k) { return k.indexOf(side + '-') === 0; }).sort(sideOrder); }
     function drawL() { var side = document.getElementById('pSide').value, codes = codesFor(side), el = document.getElementById('prevL'); el.innerHTML = ''; codes.slice(0, 12).forEach(function (c) { el.appendChild(boxLabel(c)); }); document.getElementById('cntL').textContent = codes.length + ' labels on side ' + side + (codes.length > 12 ? ' (showing the first 12)' : '') + '.'; }
     document.getElementById('pSide').onchange = drawL; drawL();

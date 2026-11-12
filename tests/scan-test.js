@@ -318,6 +318,23 @@ const STEPS = [
   await p3.clock.runFor(4000); await p3.waitForTimeout(300);
   expect('refresh after opening the app does not throw the scan station back to the start', (await p3.inputValue('#paSize').catch(() => 'GONE')) === '210 9');
   await ctx3.close();
+
+  // printouts: big side sign (one per A4 landscape) and the rack layout sheet
+  const p4 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  p4.on('pageerror', (e) => errors.push(e.message));
+  await p4.route(/google|googleapis|gstatic/, (r) => r.abort());
+  await p4.addInitScript((s) => { localStorage.setItem('armorx-inv-v1', s); window.print = () => {}; }, JSON.stringify(STATE));
+  await p4.goto('file://' + path.join(__dirname, '..', 'index.html') + '#print'); await p4.waitForSelector('#pR');
+  expect('setup labels page fits a phone screen', (await p4.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await p4.selectOption('#sSide', 'AR'); await p4.click('#pSB');
+  expect('big side sign prints only the chosen side, on A4 landscape', (await p4.$$eval('#print-area .sign.big', (a) => a.map((e) => e.textContent).join('|'))).startsWith('AR185×80') && (await p4.$$('#print-area .sign')).length === 1 && /A4 landscape/.test(await p4.textContent('#page-size')));
+  await p4.selectOption('#sSide', ''); await p4.click('#pS');
+  expect('small side signs still print all 6, 3 per A4 portrait', (await p4.$$('#print-area .sign:not(.big)')).length === 6 && /A4 portrait/.test(await p4.textContent('#page-size')));
+  await p4.click('#pR');
+  const sheets = await p4.$$eval('#print-area .rsheet', (a) => a.map((e) => e.querySelectorAll('tbody td').length + ':' + e.querySelector('.rs-side').textContent));
+  expect('rack layout prints one page per side with 30 boxes each', sheets.join(',') === 'AR,AL,BR,BL,CR,CL'.split(',').map((x) => '30:' + x).join(','));
+  expect('rack layout shows AR C1 R3 as 210x100 Black pick box', await p4.$eval('#print-area .rsheet', (e) => { const td = e.querySelectorAll('tbody tr')[2].querySelectorAll('td')[0]; return /210×100/.test(td.textContent) && /Black/.test(td.textContent) && !/BACKUP/.test(td.textContent); }));
+  await p4.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();
