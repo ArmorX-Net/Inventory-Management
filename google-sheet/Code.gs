@@ -22,16 +22,20 @@
 // Version 9 (22 Nov 2026): pick lists. The manager presses Final on a pick list and the whole list comes off stock at once
 //   (PICKLIST, "Pick lists" tab); pickers' scans then only tick the lines off and take the nets off the box (PICKED);
 //   nets not picked can go back to stock (PICKBACK). The read also gives how many of each net went out today.
-var VERSION = 9;
+// Version 10 (22 Nov 2026): the top of the racks is kept as full boxes (25 each) and part boxes. "In boxes" and "Counts"
+//   get a "Part boxes" column for TOP (e.g. "22,14"); full boxes = (nets on top - part boxes) / 25, so old TOP numbers
+//   need no change: they show as full boxes. Box recount (BOXCOUNT) is for managers. No limits on any number.
+var VERSION = 10;
+var TOP_BOX = 25;          // a full box on top of the racks holds 25 nets
 var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes', 'Pick lists']; // what a snapshot copies and a reset or restore replaces
 var KEEP_DAYS = 30;          // daily snapshots kept this long
 var SIGNIN_DAYS = 30;       // a phone stays signed in this long
 var MAX_TRIES = 5;          // wrong PINs in a row before the badge is locked
 var LOCK_MIN = 15;          // first lock; doubles with every further lock, up to one day
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
-// Scan types that need more than Worker level. Everything else (production steps, rack-in, pick, refill,
-// empty, swap, returns, box count, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
+// Scan types that need more than Worker level. Everything else (production steps, rack-in, IN, OUT, pick, refill,
+// empty, swap, returns, undo of your own scan) is open to every signed-in worker.
+var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -41,8 +45,8 @@ var TABS = {
   Stock:   ['Net ID', 'Net', 'On hand', 'Last change', 'Last change at'],
   Workers: ['Badge', 'Name', 'Main step', 'Level', 'Active', 'New PIN', 'PIN hash', 'Wrong tries', 'Locked until', 'Last sign-in'],
   Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By'],
-  Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID'],
-  'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID'],
+  Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID', 'Part boxes'],
+  'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID', 'Part boxes'],
   'Pick lists': ['List', 'Net ID', 'Net', 'Qty', 'Picked', 'Created', 'By', 'State', 'Updated'],
   Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row']
 };
@@ -93,8 +97,12 @@ function sheet_(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(name);
   if (!sh) { setup(); sh = ss.getSheetByName(name); }
+  if (!HDR_OK_[name] && TABS[name] && sh.getLastRow() > 0 && sh.getLastColumn() < TABS[name].length) // a newer version added columns: add their titles
+    sh.getRange(1, 1, 1, TABS[name].length).setValues([TABS[name]]).setFontWeight('bold');
+  HDR_OK_[name] = true;
   return sh;
 }
+var HDR_OK_ = {};
 function rows_(name) {
   var sh = sheet_(name), n = sh.getLastRow();
   return n < 2 ? [] : sh.getRange(2, 1, n - 1, TABS[name].length).getValues();
@@ -241,8 +249,8 @@ function doGet(e) {
   if (mgr && nets && nets.getLastRow() > 1) nets.getRange(2, 1, nets.getLastRow() - 1, 4).getValues().forEach(function (r) { if (r[0]) rates[r[0]] = Number(r[3]) || 0; });
   var boxes = {};
   rows_('Boxes').forEach(function (r) { if (r[0]) boxes[r[0]] = { state: r[1] || 'full', net: r[2] || '', wo: r[3] || '', made: iso_(r[4]) || null, at: iso_(r[5]), by: r[6] || '' }; });
-  var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
-  var shelf = rows_('In boxes').filter(function (r) { return r[0] && r[1]; }).map(function (r) { return { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; });
+  var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { var o = { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; if (String(r[7])) o.parts = parts_(r[7]); return o; });
+  var shelf = rows_('In boxes').filter(function (r) { return r[0] && r[1]; }).map(function (r) { var o = { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; if (String(r[7])) o.parts = parts_(r[7]); return o; });
   var tz = Session.getScriptTimeZone(), day = Utilities.formatDate(new Date(), tz, 'yyyyMMdd'), isDay = function (v) { return v && typeof v.getTime === 'function' && Utilities.formatDate(v, tz, 'yyyyMMdd') === day; };
   var picks = rows_('Pick lists').filter(function (r) { return r[0] && r[1] && (String(r[7]) !== 'done' || isDay(r[8])); }).map(function (r) {
     return { list: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, picked: Number(r[4]) || 0, created: iso_(r[5]), by: r[6], state: String(r[7] || 'open') };
@@ -343,7 +351,7 @@ function apply_(ev, station) {
       if (ev.type === 'IN') sh.getRange(b.row, 10).setValue(ev.loc || '');
       if (ev.rej) sh.getRange(b.row, 23).setValue((Number(b.values[22]) || 0) + Number(ev.rej));
     }
-    if (ev.type === 'IN') { stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t); countAdd_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, Number(ev.qty), false, t, ev.who, ev.id, 'In boxes'); }
+    if (ev.type === 'IN') { stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Rack-in ' + ev.wo, t); countAdd_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, Number(ev.qty), false, t, ev.who, ev.id, 'In boxes'); if (isTop_(ev.loc)) topParts_(ev.net); }
     if (ev.type === 'IN' && ev.loc && ev.loc !== '2F' && ev.loc !== 'TOP') box_(ev.loc, 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'SWAP') {
     var from = findRow_('Boxes', ev.loc);
@@ -364,6 +372,7 @@ function apply_(ev, station) {
   } else if (ev.type === 'OUT' || ev.type === 'FBA') {
     stock_(ev.net, ev.netName, -Number(ev.qty), 'add', ev.type, t);
     if (ev.loc) takeOff_(ev.loc, ev.net, Number(ev.qty), t, ev.who, ev.id);
+    if (isTop_(ev.loc)) topParts_(ev.net, ev.partAdd, ev.partDel);
   } else if (ev.type === 'RETURN') {
     stock_(ev.net, ev.netName, Number(ev.qty), 'add', 'Return', t);
     if (ev.loc) countAdd_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, Number(ev.qty), false, t, ev.who, ev.id, 'In boxes');
@@ -372,11 +381,12 @@ function apply_(ev, station) {
   } else if (ev.type === 'UNDO') {
     undo_(ev, t);
   } else if (ev.type === 'BOXCOUNT') {
-    count_(ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id);
+    count_(ev.loc === '2F' ? 'TOP' : ev.loc, ev.net, ev.netName, ev.qty, t, ev.who, ev.id, ev.parts);
   } else if (ev.type === 'BOXADD') { // put away: stock goes up now; the Put away tab keeps the number per box
     var q = Number(ev.qty) || 0;
     countAdd_(ev.loc, ev.net, ev.netName, q, false, t, ev.who, ev.id, 'In boxes');
     stock_(ev.net, ev.netName, q, 'add', 'Put away ' + (ev.loc || ''), t);
+    if (isTop_(ev.loc)) topParts_(ev.net, ev.partAdd, ev.partDel);
     if (ev.loc && ev.loc !== 'TOP' && ev.loc !== '2F') {
       var bx = findRow_('Boxes', ev.loc);
       if (bx && bx.values[1] === 'empty') box_(ev.loc, 'full', ev.boxNet || '', '', '', t, ev.who);
@@ -388,6 +398,7 @@ function apply_(ev, station) {
   } else if (ev.type === 'PICKED') { // a picker took nets of the list: tick the line, take them off the box; stock already went down at Final
     pickLine_(ev.list, ev.net, Number(ev.qty) || 0, 0, t);
     if (ev.loc) takeOff_(ev.loc, ev.net, Number(ev.qty) || 0, t, ev.who, ev.id);
+    if (isTop_(ev.loc)) topParts_(ev.net, ev.partAdd, ev.partDel);
   } else if (ev.type === 'PICKBACK') { // not picked after all: off the list; back to stock when the nets are still there
     var bq = Number(ev.qty) || 0;
     pickLine_(ev.list, ev.net, 0, -bq, t);
@@ -399,8 +410,8 @@ function apply_(ev, station) {
   } else if (ev.type === 'BOXSET') {
     box_(ev.loc, ev.state || 'full', ev.net, ev.wo, ev.made, t, ev.who);
   } else if (ev.type === 'COUNTDONE') {
-    var keys = {}; (ev.keys || []).forEach(function (k) { keys[k] = true; });
-    rows_('Counts').forEach(function (r) { if (keys[r[0] + '|' + r[1]]) setIn_(String(r[0]), String(r[1]), r[2], Number(r[3]) || 0, t, ev.who, ev.id); });
+    var keys = {}; (ev.keys || []).forEach(function (k) { keys[k] = true; keys[String(k).replace(/^2F\|/, 'TOP|')] = true; });
+    rows_('Counts').forEach(function (r) { if (keys[r[0] + '|' + r[1]]) setIn_(String(r[0]), String(r[1]), r[2], Number(r[3]) || 0, t, ev.who, ev.id, String(r[0]) === 'TOP' ? parts_(r[7]) : null); });
     deleteWhere_('Counts', function (r) { return keys[r[0] + '|' + r[1]]; });
   }
   // DAMAGED is only logged: damaged returns do not go back to stock.
@@ -457,6 +468,8 @@ function undo_(ev, t) {
   Object.keys(ca).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(ca[k].add) || 0, !!ca[k].drop, t, ev.who, ev.id); });
   var pa = ev.putAdd || {}; // undo of a put away (version 7): the stock part comes back through ev.stock
   Object.keys(pa).forEach(function (k) { var p = k.split('|'); countAdd_(p[0], p[1], '', Number(pa[k].add) || 0, !!pa[k].drop, t, ev.who, ev.id, 'In boxes'); });
+  var tp = ev.topParts || {}; // undo on top of the racks (version 10): part boxes come back or go again
+  Object.keys(tp).forEach(function (id) { topParts_(id, tp[id].add, tp[id].del); });
   var pk = ev.picks || {}; // undo of a pick from a pick list (version 9): the line is not ticked any more
   Object.keys(pk).forEach(function (k) { var p = k.split('|'); pickLine_(p[0], p[1], Number(pk[k]) || 0, 0, t); });
 }
@@ -476,9 +489,9 @@ function countAdd_(box, net, name, add, drop, t, who, id, tab) {
 }
 
 // Box count: one row per box + net (a 3-bin box has one row per color). A new count of the same box replaces the old one.
-function count_(box, net, name, qty, t, who, id) {
+function count_(box, net, name, qty, t, who, id, parts) {
   if (!box || !net) return;
-  var sh = sheet_('Counts'), r = rows_('Counts'), row = [box, net, name || '', Number(qty) || 0, t, workerName_(who), id || ''];
+  var sh = sheet_('Counts'), r = rows_('Counts'), row = [box, net, name || '', Number(qty) || 0, t, workerName_(who), id || '', box === 'TOP' && parts ? partsText_(fit_(parts_(parts), Number(qty) || 0)) : ''];
   for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) {
     if (!name) row[2] = r[i][2];
     sh.getRange(i + 2, 1, 1, row.length).setValues([row]); return;
@@ -503,22 +516,47 @@ function reset_(ev, t) {
 
 // ---------- number per box ----------
 function inBox_(box, net) { var r = rows_('In boxes'); for (var i = 0; i < r.length; i++) if (String(r[i][0]) === String(box) && String(r[i][1]) === String(net)) return { row: i + 2, qty: Number(r[i][3]) || 0, values: r[i] }; return null; }
-function setIn_(box, net, name, qty, t, who, id) {
+// parts: the part boxes on top (TOP only). null = keep the ones there, fitted to the new number.
+function setIn_(box, net, name, qty, t, who, id, parts) {
   var sh = sheet_('In boxes'), f = inBox_(box, net), row = [box, net, name || (f ? f.values[2] : ''), qty, t, workerName_(who), id || ''];
+  if (box === 'TOP') row.push(partsText_(fit_(parts ? parts_(parts) : (f ? parts_(f.values[7]) : []), qty)));
   if (f) sh.getRange(f.row, 1, 1, row.length).setValues([row]); else sh.appendRow(row);
+}
+// ---------- top of the racks: full boxes of 25 and part boxes (version 10) ----------
+// The TOP row keeps the number of nets on top (part of the total, as before) and the part boxes, e.g. "22,14".
+// Full boxes = (nets on top - part boxes) / 25. A number left over (an old count that is not a multiple of 25) shows as one more part box.
+function isTop_(loc) { return loc === 'TOP' || loc === '2F'; }
+function parts_(v) { return (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[^0-9]+/)).map(function (x) { return Math.round(Number(x) || 0); }).filter(function (x) { return x > 0; }); }
+function partsText_(p) { return p.join(','); }
+function fit_(p, q) { p = p.slice(); var s = p.reduce(function (a, x) { return a + x; }, 0); while (s > q && p.length) s -= p.pop(); return p; } // never more in part boxes than on top
+// add / take away part boxes on top for one net, then fit them to the number on top
+function topParts_(net, add, del) {
+  var f = inBox_('TOP', net); if (!f) return;
+  var p = parts_(f.values[7]);
+  parts_(del || []).forEach(function (x) { var i = p.indexOf(x); if (i >= 0) p.splice(i, 1); });
+  p = p.concat(parts_(add || []));
+  var txt = partsText_(fit_(p, f.qty));
+  if (txt !== String(f.values[7] || '')) sheet_('In boxes').getRange(f.row, 8).setValue(txt);
 }
 // a pick from a box takes the nets off that box's number (never below 0; the total per net is what counts)
 function takeOff_(box, net, q, t, who, id) {
   var f = inBox_(box === '2F' ? 'TOP' : box, net); if (!f) return;
   sheet_('In boxes').getRange(f.row, 4, 1, 4).setValues([[Math.max(0, f.qty - q), t, workerName_(who), id || '']]);
+  if (isTop_(box)) topParts_(net);
+}
+function topText_(q, p) { // 72 with part box 22 -> "2 full + part 22 = 72"
+  p = fit_(p, q); var rest = q - p.reduce(function (a, x) { return a + x; }, 0), full = Math.floor(rest / TOP_BOX), left = rest - full * TOP_BOX;
+  if (left) p = p.concat([left]);
+  return (full ? full + ' full' : '') + (p.length ? (full ? ' + ' : '') + 'part ' + p.join(', ') : '') + (full || p.length ? ' = ' + q : '0');
 }
 function boxQty_(ev, t) {
   if (!ev.loc || !ev.net) return;
   var loc = ev.loc === '2F' ? 'TOP' : ev.loc, f = inBox_(loc, ev.net), was = f ? f.qty : 0, q = Math.max(0, Math.round(Number(ev.qty) || 0));
-  setIn_(loc, ev.net, ev.netName, q, t, ev.who, ev.id);
+  var was0 = loc === 'TOP' && f ? topText_(was, parts_(f.values[7])) : String(was);
+  setIn_(loc, ev.net, ev.netName, q, t, ev.who, ev.id, loc === 'TOP' && Array.isArray(ev.parts) ? ev.parts : null);
   if (q !== was) stock_(ev.net, ev.netName, q - was, 'add', (ev.upload ? 'Excel upload ' : 'Box change ') + loc, t);
-  var row = findRow_('Scans', ev.id);
-  if (row) sheet_('Scans').getRange(row.row, 12).setValue((ev.upload ? 'Excel upload ' + ev.upload + ': ' : 'Box change: ') + loc + ' ' + was + ' → ' + q + (ev.reason ? ' · reason: ' + ev.reason : ''));
+  var row = findRow_('Scans', ev.id), now = loc === 'TOP' ? topText_(q, parts_(inBox_('TOP', ev.net).values[7])) : String(q);
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue((ev.upload ? 'Excel upload ' + ev.upload + ': ' : 'Box change: ') + loc + ' ' + was0 + ' → ' + now + (ev.reason ? ' · reason: ' + ev.reason : ''));
   if (loc !== 'TOP' && ev.boxState) { var b = findRow_('Boxes', loc), cur = b ? b.values[1] : 'full'; if (cur !== ev.boxState) box_(loc, ev.boxState, ev.boxNet || '', '', '', t, ev.who); }
 }
 

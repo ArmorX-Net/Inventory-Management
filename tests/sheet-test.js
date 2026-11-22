@@ -68,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 9 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 10 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -126,7 +126,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 9', state().v === 9);
+expect('doGet says version 10', state().v === 10);
 expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
 expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
   sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
@@ -250,6 +250,31 @@ s = state();
 expect('nets not picked go back to stock and off the list; the list is done', s.stock[PK2] === pk20 - 2 && s.picks.filter((x) => x.list === 'PL-1').every((x) => x.state === 'done') && s.picks.find((x) => x.net === PK2).qty === 2);
 post([{ id: 'pl2', type: 'PICKLIST', list: 'PL-2', lines: [{ net: PK, qty: 1 }] }, { id: 'pb2', type: 'PICKBACK', list: 'PL-2', net: PK, qty: 1, restock: false }]);
 expect('not on the shelf: off the list, stock stays down', state().stock[PK] === pk0 - 4 && state().picks.find((x) => x.list === 'PL-2').state === 'done');
+
+// ---- top of the racks as full boxes and part boxes (version 10) ----
+const TN = 'DN-205x95-GR';
+const topRow = () => (get(T.token).shelf.find((y) => y.box === 'TOP' && y.net === TN) || {});
+post([{ type: 'BOXADD', loc: 'TOP', net: TN, qty: 50 }]);
+expect('an old TOP number with no part boxes is all full boxes (50 = 2 full)', topRow().qty === 50 && !topRow().parts);
+post([{ type: 'BOXADD', loc: 'TOP', net: TN, qty: 22, partAdd: [22] }, { type: 'BOXADD', loc: 'TOP', net: TN, qty: 14, partAdd: [14] }]);
+expect('IN two part boxes on top: 86 = 2 full + part boxes 22 and 14', topRow().qty === 86 && topRow().parts.join() === '22,14');
+const tn0 = state().stock[TN];
+post([{ type: 'OUT', net: TN, qty: 22, loc: 'TOP', partDel: [22] }]);
+expect('OUT the part box of 22: 64 on top, part box 14 left, stock −22', topRow().qty === 64 && topRow().parts.join() === '14' && state().stock[TN] === tn0 - 22);
+post([{ type: 'OUT', net: TN, qty: 3, loc: 'TOP', partAdd: [22] }]);
+expect('OUT 3 nets from a full box on top: that box becomes a part box of 22', topRow().qty === 61 && topRow().parts.join() === '14,22');
+post([{ id: 'tu1', type: 'UNDO', undoes: 'x', reason: 'Wrong number', net: TN, stock: { [TN]: 3 }, putAdd: { ['TOP|' + TN]: { add: 3, drop: false } }, topParts: { [TN]: { add: [14], del: [14, 22] } } }]);
+expect('undo that OUT: 64 on top, part box 14 again', topRow().qty === 64 && topRow().parts.join() === '14');
+post([{ type: 'BOXQTY', net: TN, loc: 'TOP', qty: 25 * 20 + 9 + 11, parts: [9, 11], reason: 'Counted wrong before' }]);
+expect('manager sets the top: 20 full + part boxes 9 and 11 = 520, total moves by +456', topRow().qty === 520 && topRow().parts.join() === '9,11' && state().stock[TN] === tn0 - 22 + 456 && /Box change: TOP 2 full \+ part 14 = 64 → 20 full \+ part 9, 11 = 520/.test(sheets.Scans.data[sheets.Scans.data.length - 1][11]));
+post([{ type: 'BOXQTY', net: TN, loc: 'TOP', qty: 50000, reason: 'Opening count' }]);
+expect('no limit on top: 50000 nets is saved, part boxes kept', topRow().qty === 50000 && topRow().parts.join() === '9,11');
+post([{ type: 'OUT', net: TN, qty: 49995, loc: 'TOP' }]);
+expect('when the top drops below the part boxes, they are fitted to the number on top', topRow().qty === 5 && !topRow().parts);
+post([{ type: 'BOXCOUNT', loc: 'TOP', net: TN, qty: 47, parts: [22] }, { type: 'COUNTDONE', keys: ['TOP|' + TN] }]);
+expect('box recount of the top with a part box, applied: 47 = 1 full + part 22', topRow().qty === 47 && topRow().parts.join() === '22');
+r = call({ t: login('EMP-07', '5555').token, events: [{ id: 'wbc', type: 'BOXCOUNT', loc: 'AL-C1-R1', net: TN, qty: 3, t: '2026-11-11T09:00:00.000Z' }] });
+expect('box recount is for managers: a worker\'s is refused', r.refused.length === 1);
 
 // ---- daily snapshot and restore ----
 ctx.dailySnapshot(); ctx.dailySnapshot();
