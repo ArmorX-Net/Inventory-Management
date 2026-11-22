@@ -12,11 +12,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   var BOXES = window.BOXES || {}, BY_ID = {};
   NETS.forEach(function (n) { BY_ID[n.id] = n; });
   var FLOOR2 = 'TOP'; // extra stock on top of the racks (above R5), refills the boxes. Old '2F' labels still scan as TOP.
-<<<<<<< HEAD
-  var TOP_BOX = 25, TOP_MAX = 5000; // the top of the racks holds many boxes: up to 200 boxes of 25 per net in one number // owner 22 Nov 2026: stock on top of the racks sits in full boxes of 25 nets
-=======
-  var TOP_BOX = 25; // owner 22 Nov 2026: stock on top of the racks sits in full boxes of 25 nets
->>>>>>> 1b4f99f114c3f030b38e57da25b879a16f3fd4f4
+  var TOP_BOX = 25, TOP_MAX = 5000; // owner 22 Nov 2026: stock on top sits in full boxes of 25; one net can have many boxes there
   // nets on top shown as boxes (owner 22 Nov 2026): full boxes of 25, the rest is one part box. 72 = 2 full boxes + 1 box of 22.
   function topSplit(q) { q = Math.max(0, Number(q) || 0); return { full: Math.floor(q / TOP_BOX), part: q % TOP_BOX, q: q }; }
   function topText(q) {
@@ -1456,7 +1452,6 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     });
     document.getElementById('sides').innerHTML = out;
     // tap a box: a pop-up in front of the screen with everything about that net (owner 22 Nov 2026, made for phones)
-<<<<<<< HEAD
     function totalParts(n, code, inB, top) { // the total = this box + the other boxes of this net + top + not in a box
       var other = inBoxes(n.id) - inB, gap = onHand(n.id) - inBoxes(n.id) - top, bits = [inB + ' in this box'];
       if (other) bits.push(other + ' in the other boxes');
@@ -1464,8 +1459,6 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (gap > 0) bits.push(gap + ' not in a box');
       return '= ' + bits.join(' + ') + (gap < 0 ? '<br><b>The boxes and top hold ' + (-gap) + ' more than the total.</b> Count this net again, or a manager fixes the total with COUNT.' : '');
     }
-=======
->>>>>>> 1b4f99f114c3f030b38e57da25b879a16f3fd4f4
     function info(code) {
       var bx = BOXES[code], el = document.getElementById('boxInfo');
       var close = function () { el.hidden = true; el.innerHTML = ''; document.body.classList.remove('pop-on'); };
@@ -1479,11 +1472,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
           return '<div class="pop-h"><div class="pop-net"><span class="sw sw-' + n.color + '"></span>' + esc(n.size.replace('x', ' × ')) + ' ' + esc(n.color) + '</div>' +
             '<div class="small"><b>' + esc(code) + '</b> · ' + (bx.role === 'pick' ? 'PICK box' : 'BACKUP box') + ' · ' + esc(locHint(code)) + '</div>' +
             '<div class="small muted">' + (r ? (r.state === 'empty' ? '<b>Marked empty</b>' : (r.made ? 'Made ' + esc(fmtD(r.made)) : 'Has nets')) : 'Not scanned yet') + '</div></div>' +
-<<<<<<< HEAD
             '<div class="pop-g"><div class="pop-t big"><span>Total in stock</span><b>' + onHand(n.id) + '</b><small>' + totalParts(n, code, inB || 0, top) + '</small></div>' +
-=======
-            '<div class="pop-g"><div class="pop-t big"><span>Total in stock</span><b>' + onHand(n.id) + '</b></div>' +
->>>>>>> 1b4f99f114c3f030b38e57da25b879a16f3fd4f4
             '<div class="pop-t"><span>In this box</span><b>' + (inB == null ? '—' : inB) + '</b><small>holds ' + boxCap(code, n.id) + '</small></div>' +
             '<div class="pop-t"><span>On top of racks</span><b>' + top + '</b><small>' + esc(top ? topText(top) : 'no boxes') + '</small></div>' +
             '<div class="pop-t wide"><span>Boxes on top</span>' + topBoxes(top) + '</div>' +
