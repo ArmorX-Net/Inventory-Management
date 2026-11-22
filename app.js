@@ -13,8 +13,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   NETS.forEach(function (n) { BY_ID[n.id] = n; });
   var FLOOR2 = 'TOP'; // extra stock on top of the racks (above R5), refills the boxes. Old '2F' labels still scan as TOP.
   // 11 Nov 2026 (owner): no R6 boxes for now. Extra stock sits on top of the racks (TOP) with no fixed places, so a pick box
-  // without a backup refills straight from TOP. The 210x100 backups on R1-R5 (AR C1-C3) stay. data/doornets.js keeps the
-  // planned R6 boxes; set USE_R6 to true to use them again.
+  // without a backup refills straight from TOP. 22 Nov 2026 (layout v8): racks A-D in one size order, one colour per box,
+  // 210x100 keeps backups on R2 and R4 (AR C1-C3). data/doornets.js has no R6 boxes any more; USE_R6 only matters if they come back.
   var USE_R6 = false;
   if (!USE_R6) {
     Object.keys(BOXES).forEach(function (c) { if (/-R6$/.test(c)) delete BOXES[c]; });
@@ -378,13 +378,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<li>Scan the <b>batch label</b>. The batch moves to the next step: Cut → Base → Sides → Finish → Pack, and your name is saved on that step.</li>' +
       '<li>If some nets were rejected, type the good count and press Enter (within the next scan).</li>' +
       '<li>After Pack, scan the batch, then <b>TOP</b> (top of racks) or an <b>empty</b> box on the rack. Stock goes up.</li>' +
-      '<li>To pick: scan <b>OUT</b>, then the <b>pick box</b> (3-bin box: tap the color), then the quantity.</li>' +
+      '<li>To pick: scan <b>OUT</b>, then the <b>pick box</b>, then the quantity.</li>' +
       '<li>Pick box empty: scan <b>EMPTY</b>, then the box. It goes on the refill list. (210×100 only: scan <b>SWAP</b> and the backup box you bring over.)</li>' +
       '<li>Every 3–4 days: open <a href="#refill">Refill list</a>, fill each empty box from the oldest batch on top of the racks, scan <b>REFILL</b> and the box.</li>' +
       '<li>Made a mistake? Tap <b>Undo my last scan</b> (or scan <b>UNDO</b>) within ' + UNDO_MIN + ' minutes and pick why.</li>' +
       '<li>Putting nets in: tap <b>IN</b>, type the size (e.g. 210 90), tap the color. The app shows the box in big letters. Put the nets in and tap how many.</li>' +
       '<li>Taking nets out: tap <b>OUT</b>, type the size, tap the color. The app shows the box. Take the nets out and tap how many.</li>' +
-      '<li>Counting: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box (3-bin box: one number per color). Scan <b>TOP</b> for the top of the racks. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
+      '<li>Counting: tap <b>Count boxes</b>, scan each shelf label and type how many are in that box. Scan <b>TOP</b> for the top of the racks. The manager applies the counts from <a href="#stock">Stock</a>.</li></ol></details></div>');
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
@@ -784,18 +784,19 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function inBoxes(id) { var n = BY_ID[id]; return homeOf(n).reduce(function (a, c) { return a + counted(c, id); }, 0); }
   // A manager sets the number in one box (or TOP): stock moves by the difference. Also used row by row by the Excel upload.
   var BOXQTY_V = 8;
-  function setBoxQty(loc, id, q, reason, upload) {
+  function setBoxQty(loc, id, q, reason, upload, opt) {
+    opt = opt || {};
     var n = BY_ID[id], k = countKey(loc, id), was = counted(loc, id), d = q - was, prev = !!S.shelf[k];
     var own = loc !== FLOOR2 && BOXES[loc] && BOXES[loc].kind === 'own', pbx = loc !== FLOOR2 ? snapBoxes([loc]) : {};
     S.shelf[k] = { box: loc, net: id, qty: q, at: now(), by: sess.emp };
     S.stock[id] = Math.max(0, onHand(id) + d);
     var state = '';
-    if (loc !== FLOOR2) { var tot = boxTotal(loc); if (tot === 0 && !isEmpty(loc)) state = 'empty'; else if (tot > 0 && isEmpty(loc)) state = 'full'; }
+    if (loc !== FLOOR2 && !opt.keepState) { var tot = boxTotal(loc); if (tot === 0 && !isEmpty(loc)) state = 'empty'; else if (tot > 0 && isEmpty(loc)) state = 'full'; }
     if (state) setBox(loc, state === 'empty' ? { state: 'empty' } : { state: 'full', net: own ? id : '', wo: '', made: null });
     var ev = addLog({ type: 'BOXQTY', who: sess.emp, net: id, qty: q, was: was, loc: loc, reason: reason, upload: upload || '', boxState: state, boxNet: own ? id : '',
       note: (upload ? 'Excel upload ' + upload + ': ' : 'Box change: ') + (loc === FLOOR2 ? 'top of racks' : loc) + ' ' + was + ' → ' + q + ' · reason: ' + reason });
     var st = {}; st[id] = -d; var pa = {}; pa[k] = { add: d, drop: !prev };
-    if (!upload) remember(ev, { stock: st, putAdd: pa, boxes: state ? pbx : {} });
+    if (!upload && !opt.noUndo) remember(ev, { stock: st, putAdd: pa, boxes: state ? pbx : {} });
     return { ev: ev, d: d, was: was, n: n };
   }
   function paBox(n) { var hs = homeOf(n); for (var i = 0; i < hs.length; i++) if (counted(hs[i], n.id) < boxCap(hs[i], n.id)) return hs[i]; return n.pick; } // first box with room
@@ -963,6 +964,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewStock() {
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Stock</h2><div class="row" style="align-items:flex-end"><label class="f">Search size, color or rack<input id="q" placeholder="e.g. 210x100, Grey, AR-C1"></label><button class="btn" id="cntPrint">Print count sheet</button><button class="btn primary" id="cntMode">Enter counts</button></div></div>' +
       '<div class="card" id="bcCard"></div>' +
+      '<div class="card" id="mvCard" hidden></div>' +
       '<div class="card" id="xlCard"></div>' +
       '<div class="note small" id="cntHelp" hidden>Count mode. Type what you counted in the boxes and on top of the racks. Only rows you fill in are saved, as COUNT scans with your name. Leave a row empty to keep it as it is. If any count is different from the system, pick a reason before saving.</div>' +
       '<div class="tablewrap"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><div class="row" id="cntBar" hidden style="justify-content:flex-end;align-items:flex-end;margin-top:8px"><span class="small muted" id="cntMsg"></span>' + reasonSelect('cntWhy') + '<button class="btn" id="cntCancel">Cancel</button><button class="btn primary" id="cntSave">Save counts</button></div>');
@@ -1011,7 +1013,32 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     };
     document.getElementById('q').oninput = draw; draw();
     drawBoxCount(false);
+    drawMoves();
     drawExcel();
+  }
+  // Rack change (22 Nov 2026, one colour per box): box numbers still kept under a box that no longer holds that net.
+  // After the nets are carried to their new box, a manager moves the numbers in one go. The total of each net stays the same.
+  function oldBoxRows() {
+    return Object.keys(S.shelf).map(function (k) { return S.shelf[k]; }).filter(function (r) {
+      var b = BOXES[r.box], n = BY_ID[r.net]; return n && r.box !== FLOOR2 && Number(r.qty) > 0 && !(b && b.nets.indexOf(r.net) >= 0);
+    }).map(function (r) { var n = BY_ID[r.net]; return { from: r.box, n: n, q: Number(r.qty), to: (window.LAYOUT_MOVES || {})[r.box + '|' + r.net] || n.pick }; })
+      .sort(function (a, b) { return sideOrder(a.from, b.from); });
+  }
+  function drawMoves() {
+    var el = document.getElementById('mvCard'); if (!el) return;
+    var rows = oldBoxRows(); el.hidden = !rows.length || !can('Manager'); if (el.hidden) return;
+    el.innerHTML = '<h3>Rack change: move box numbers</h3><div class="small">These nets are still counted in a box they no longer belong to. Carry them to their new box first, then press <b>Move numbers</b>. Totals do not change.</div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Net</th><th>Old box</th><th>Nets</th><th>New box</th></tr></thead><tbody>' +
+      rows.map(function (x) { return '<tr><td><span class="sw sw-' + x.n.color + '"></span>' + esc(netLabel(x.n)) + '</td><td><code>' + esc(x.from) + '</code></td><td><b>' + x.q + '</b></td><td><code>' + esc(x.to === FLOOR2 ? 'TOP (top of racks)' : x.to) + '</code></td></tr>'; }).join('') +
+      '</tbody></table></div><div class="row" style="justify-content:flex-end"><span class="small" id="mvMsg"></span><button class="btn primary" id="mvGo">Move numbers</button></div>';
+    document.getElementById('mvGo').onclick = function () {
+      if (!sheetV8()) { document.getElementById('mvMsg').textContent = 'Needs the Google Sheet script version ' + BOXQTY_V + '.'; return; }
+      rows.forEach(function (x) {
+        setBoxQty(x.to, x.n.id, counted(x.to, x.n.id) + x.q, 'Rack change', '', { noUndo: true }); // add to the new box first, so the total never dips
+        setBoxQty(x.from, x.n.id, 0, 'Rack change', '', { noUndo: true, keepState: true });
+      });
+      S.undo = null; save(); toast(rows.length + ' box numbers moved.'); route();
+    };
   }
   function reasonSelect(id) {
     return '<label class="f">Reason for changes<select id="' + id + '"><option value="">— pick a reason —</option>' + COUNT_REASONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select></label>' +
@@ -1339,8 +1366,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     h('<h2>Setup labels</h2><div class="note">Print these once. Shelf labels (one per box slot, stuck on the shelf edge, never moved) and badges are 50 × 25 mm. Batch labels and box tags (also 50 × 25 mm) print from <a href="#batches">Batches</a>. All barcodes are Code 128, which every USB scanner reads.</div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Worker badges</h3><button class="btn primary" id="pW">Print all badges</button></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevW"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between"><h3>Command sheet</h3><button class="btn primary" id="pC">Print commands</button></div><div class="small muted">Includes the TOP label (extra stock on top of the racks).</div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevC"></div></details></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="sSide"><option value="">All 6 sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pSB">Big: 1 per A4 landscape</button><button class="btn" id="pS">Small: 3 per A4</button></div></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Big prints one sign on a whole A4 page, landscape. Small prints 3 per A4 page, portrait: cut along the borders. Laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Rack layout sheet</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="rSide"><option value="">All 6 sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pR">Print layout</button></div></div><div class="small muted">A picture of each rack side with the size and color of every box, one A4 landscape page per side. Give it to whoever puts the boxes on the racks.</div><details class="pv"><summary>Show preview</summary><div class="rsheet-preview" id="prevR"></div></details></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Side signs</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="sSide"><option value="">All ' + sides.length + ' sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pSB">Big: 1 per A4 landscape</button><button class="btn" id="pS">Small: 3 per A4</button></div></div><div class="small muted">One sign at the end of each rack side: the side code and its size range. Big prints one sign on a whole A4 page, landscape. Small prints 3 per A4 page, portrait: cut along the borders. Laminate.</div><details class="pv"><summary>Show preview</summary><div class="signs-preview" id="prevS"></div></details></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Rack layout sheet</h3><div class="row" style="align-items:flex-end"><label class="f">Which side<select id="rSide"><option value="">All ' + sides.length + ' sides</option>' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pR">Print layout</button></div></div><div class="small muted">A picture of each rack side with the size and color of every box, one A4 landscape page per side. Give it to whoever puts the boxes on the racks.</div><details class="pv"><summary>Show preview</summary><div class="rsheet-preview" id="prevR"></div></details></div>' +
       '<div class="card"><div class="row" style="justify-content:space-between;align-items:flex-end"><h3>Shelf labels</h3><div class="row" style="align-items:flex-end"><label class="f">Side<select id="pSide">' + sides.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select></label><button class="btn primary" id="pL">Print this side</button></div></div><div class="small muted" id="cntL"></div><details class="pv"><summary>Show preview</summary><div class="labels-preview" id="prevL"></div></details></div>');
     S.workers.forEach(function (w) { document.getElementById('prevW').appendChild(badgeLabel(w)); });
     COMMANDS.forEach(function (c) { document.getElementById('prevC').appendChild(cmdLabel(c)); });
