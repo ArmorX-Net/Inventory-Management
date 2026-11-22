@@ -162,8 +162,13 @@ const STEPS = [
   expect('scanning the wrong shelf says where it goes', (await fbText()).includes('Wrong box'));
   await scan(PA_BOX);
   expect('scanning the right shelf confirms it', (await fbText()).includes('Right box'));
-  await page.click('[data-pa-top="3"]');
-  expect('box full: 3 on top of the rack', (await fbText()).includes('top of the rack'));
+  await page.click('[data-pa-top="25"]');
+  expect('box full: one tap puts a full box (25) on top', (await st()).shelf['TOP|' + PA].qty === 25 && /full box/.test(await fbText()));
+  await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
+  expect('undo takes the full box back off the top', !(await st()).shelf['TOP|' + PA]);
+  await page.fill('#paSize', '2109'); await page.click('[data-pa-size="210x90"]'); await page.click('[data-pa-net="' + PA + '"]');
+  await page.fill('#paTopQty', '3'); await page.click('[data-pa-topother]');
+  expect('box not full: type 3, 3 on top of the rack', (await fbText()).includes('top of the rack') && (await st()).shelf['TOP|' + PA].qty === 3);
   await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
   S = await st();
   expect('undo takes only the last add back off: box 5, nothing on top', S.shelf[PA_BOX + '|' + PA].qty === 5 && !S.shelf['TOP|' + PA] && !!(await page.$('#paSize')));
@@ -188,6 +193,8 @@ const STEPS = [
   expect('undo OUT puts the 2 back in the box and in stock', S.shelf[PA_BOX + '|' + PA].qty === 5 && S.stock[PA] === outBefore && !!(await page.$('#paSize')));
   await page.click('.pa-same'); await page.fill('#paQty', '150'); await page.press('#paQty', 'Enter');
   expect('OUT more than in stock is refused', (await fbText()).includes('in stock') && (await st()).stock[PA] === outBefore);
+  await scan('WO-0002');
+  expect('scanning a batch label in OUT fills in its size and color', (await fbText()).includes('185') && !!(await page.$('.pa-loc')));
   await scan('CMD-CANCEL');
   await page.evaluate(() => { location.hash = 'dashboard'; }); await page.waitForTimeout(150);
   expect('dashboard shows the put aways so far', (await page.textContent('#app')).includes('Put away so far'));
@@ -197,8 +204,9 @@ const STEPS = [
   expect('rack map tile shows the number in the box', (await page.textContent('[data-b="' + PA_BOX + '"] .q')) === '5');
   await page.click('[data-b="' + PA_BOX + '"]');
   expect('box info shows in this box, on top, total', (await page.textContent('#boxInfo')).includes('In this box'));
+  expect('box pop-up shows total, on top as boxes, out today', /Total in stock/.test(await page.textContent('#boxInfo')) && /Out today/.test(await page.textContent('#boxInfo')) && /Boxes on top/.test(await page.textContent('#boxInfo')));
   let s1 = (await st()).stock[PA];
-  await page.fill('#bqQty', '7'); await page.click('#bqSave');
+  await page.click('.pop-edit summary'); await page.fill('#bqQty', '7'); await page.click('#bqSave');
   expect('box change needs a reason', (await page.textContent('#bqMsg')).includes('reason'));
   await page.selectOption('#bqWhy', 'Found extra nets'); await page.click('#bqSave');
   S = await st();
@@ -235,6 +243,39 @@ const STEPS = [
   await page.setInputFiles('#xlUp', path.join(__dirname, 'fixtures', 'excel-deflate.xlsx'));
   await page.waitForFunction(() => /rows read|Could not/.test(document.getElementById('xlMsg').textContent));
   expect('a compressed Excel file from Excel is read (2 changes: box 11, top 2)', (await page.textContent('#xlMsg')).includes('2 changes') && (await page.textContent('#xlPrev')).includes('11'));
+
+  // pick list Final: the whole list comes off stock once; OUT then only ticks it off (and takes it off the box)
+  s1 = (await st()).stock[PA];
+  await page.evaluate(() => { location.hash = 'pick'; }); await page.waitForSelector('#pIn');
+  await page.fill('#pIn', '210x90 Black 2'); await page.click('#pGo'); await page.click('#pFin');
+  expect('Final asks: remove all these nets from stock now?', (await page.textContent('#pFinal')).includes('Remove all these nets from stock now?'));
+  await page.click('#pYes');
+  S = await st();
+  const PL = Object.keys(S.picks || {})[0];
+  expect('Yes: the list comes off stock at once (−2), logged once as PICKLIST', S.stock[PA] === s1 - 2 && PL && S.picks[PL].lines[PA].qty === 2 && S.log[0].type === 'PICKLIST' && S.log[0].qty === 2);
+  expect('the open list shows 0 of 2 picked', (await page.textContent('#pOpen')).includes('0 of 2 picked'));
+  await page.evaluate(() => { location.hash = 'scan'; }); await page.waitForSelector('#scanIn');
+  await page.click('[data-act="TAKEOUT"]');
+  await page.fill('#paSize', '2109'); await page.click('[data-pa-size="210x90"]'); await page.click('[data-pa-net="' + PA + '"]');
+  expect('OUT says the net is on the pick list', (await page.textContent('.pa-pick')).includes('On the pick list'));
+  await page.click('[data-pa-add="1"]');
+  S = await st();
+  expect('OUT 1 of a listed net: ticks the list, off the box, stock not taken twice', S.stock[PA] === s1 - 2 && S.shelf[PA_BOX + '|' + PA].qty === 4 && S.picks[PL].lines[PA].picked === 1 && S.log[0].type === 'PICKED');
+  await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
+  S = await st();
+  expect('undo the pick: list back to 0 picked, box back to 5, stock unchanged', S.picks[PL].lines[PA].picked === 0 && S.shelf[PA_BOX + '|' + PA].qty === 5 && S.stock[PA] === s1 - 2);
+  await page.click('.pa-same'); await page.click('[data-pa-add="1"]');
+  await scan('CMD-CANCEL');
+  await page.evaluate(() => { location.hash = 'pick'; }); await page.waitForSelector('#pIn');
+  expect('the open list shows 1 of 2 picked', (await page.textContent('#pOpen')).includes('1 of 2 picked'));
+  await page.click('[data-plback]'); await page.click('[data-plgo="1"]');
+  S = await st();
+  expect('not picked → back to stock: +1, list all picked, logged as PICKBACK', S.stock[PA] === s1 - 1 && S.picks[PL].state === 'done' && S.log[0].type === 'PICKBACK' && S.log[0].restock === true);
+
+  // shelf labels: size and colour big, box code small, barcode still there
+  await page.evaluate(() => { location.hash = 'print'; }); await page.waitForSelector('#prevL .lbl-loc', { state: 'attached' });
+  const lbl = await page.$eval('#prevL .lbl-loc', (e) => ({ size: (e.querySelector('.ll-size') || {}).textContent, col: (e.querySelector('.ll-col') || {}).textContent, code: (e.querySelector('.ll-code') || {}).textContent, bars: !!e.querySelector('svg.bc rect, svg.bc path') }));
+  expect('shelf label: size and colour big, box code small, barcode', /\d+×\d+/.test(lbl.size || '') && /BLACK|BROWN|GREY/.test(lbl.col || '') && /-C\d-R\d/.test(lbl.code || '') && lbl.bars);
 
   // reset to zero: owner only, typed confirmation, everything back to 0
   await page.evaluate(() => { location.hash = 'settings'; }); await page.waitForTimeout(150);
@@ -317,7 +358,7 @@ const STEPS = [
   await p3.evaluate(() => { document.getElementById('sides').dataset.mark = '1'; });
   await tick();
   expect('refresh: the rack map redraws with new numbers when nobody is using it', !(await p3.$('#sides[data-mark]')));
-  await p3.click('[data-b="' + PICK + '"]'); await p3.fill('#bqQty', '12');
+  await p3.click('[data-b="' + PICK + '"]'); await p3.click('.pop-edit summary'); await p3.fill('#bqQty', '12');
   await tick();
   expect('refresh: an open box with a typed number stays as it is', (await p3.inputValue('#bqQty')) === '12');
   await p3.evaluate(() => { location.hash = 'stock'; }); await p3.waitForSelector('#cntMode');

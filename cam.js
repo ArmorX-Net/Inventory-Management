@@ -1,10 +1,11 @@
 /* ArmorX Inventory: phone camera scanning.
    Opens the back camera full screen, reads Code 128 labels and sends each code to the
-   same handle() the USB scanner uses. Stays open so a worker can scan a batch and then a box.
+   same handle() the USB scanner uses. With opts.keep, it closes after a good scan and goes back to the screen
+   (owner 22 Nov 2026); it stays open while opts.keep() says so (a wrong code, or a box label comes next).
    Uses the phone's built-in barcode reader when there is one (Android Chrome), otherwise ZXing (iPhone). */
 (function () {
   'use strict';
-  var el, video, msg, prompt, stream, reader, timer, onCode, lastCode = '', lastAt = 0, busy = false;
+  var el, video, msg, prompt, stream, reader, timer, onCode, opts = {}, lastCode = '', lastAt = 0, busy = false;
 
   function build() {
     el = document.createElement('div');
@@ -35,7 +36,10 @@
     lastCode = code; lastAt = t; busy = true;
     if (navigator.vibrate) navigator.vibrate(60);
     el.classList.add('flash'); setTimeout(function () { el.classList.remove('flash'); }, 180);
-    try { onCode(code); } finally { mirror(); setTimeout(function () { busy = false; }, 400); }
+    try { onCode(code); } finally {
+      setTimeout(function () { busy = false; }, 400);
+      if (opts.keep && !opts.keep()) { close(); if (opts.after) opts.after(); } else mirror();
+    }
   }
 
   function camera() {
@@ -82,8 +86,8 @@
       .catch(function () { return startZXing; });
   }
 
-  function open(handler) {
-    onCode = handler;
+  function open(handler, o) {
+    onCode = handler; opts = o || {};
     if (!el) build();
     el.hidden = false; document.body.classList.add('cam-on');
     mirror();
