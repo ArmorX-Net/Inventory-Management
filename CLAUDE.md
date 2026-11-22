@@ -3,7 +3,8 @@
 Read this before changing the app. These are the owner's standing rules. If a change breaks one, ask the owner first.
 
 ## The app
-* Static web app on GitHub Pages (`index.html`, `app.js`, `cam.js`, `styles.css`, `data/doornets.js`). No build step, no npm packages in the app.
+* Static web app on GitHub Pages (`index.html`, `app.js`, `cam.js`, `styles.css`, `data/doornets.js`, `data/help.js`). No build step, no npm packages in the app.
+* Help (owner, 22 Nov 2026): the Help page searches the built-in answers in `data/help.js` (no AI, no keys) and answers box codes and sizes from live data; the same file holds the one-page cheat sheet (Help and Setup labels → Print cheat sheet). When you change words on a screen, update the matching answer there.
 * Shared data: Google Sheet through the Apps Script web app in `google-sheet/Code.gs`. After changing `Code.gs`, the owner must paste it into Apps Script and deploy a new version.
 * Workers scan with their own phones (camera) or the USB scanner (Code 128). Everything must work on a phone screen.
 * Business account is the office Google account. This repo is public: never commit a PIN, password, key, staff names, sales numbers, or customer data.

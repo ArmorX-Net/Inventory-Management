@@ -282,7 +282,7 @@ const STEPS = [
   expect('right PIN: scan station, name in the top bar', (await p2.textContent('#meChip')).includes('Test Stitcher'));
   expect('reads send the sign-in token, never a key', gets.length > 0 && gets.every((u) => /[?&]t=EMP-07\./.test(u) && !/key=/.test(u)));
   const vis = await p2.$$eval('#tabs a', (as) => as.filter((a) => !a.hidden).map((a) => a.getAttribute('href')).join(' '));
-  expect('worker tabs: ' + vis, vis === '#scan #pick #racks #refill');
+  expect('worker tabs: ' + vis, vis === '#scan #pick #racks #refill #help');
   expect('worker has no Count button', !(await p2.$('[data-act="COUNT"]')) && !!(await p2.$('[data-act="BOXCOUNT"]')));
   await p2.fill('#scanIn', 'CMD-COUNT'); await p2.press('#scanIn', 'Enter');
   expect('worker CMD-COUNT refused', (await p2.textContent('#fb')).includes('Only a manager'));
@@ -376,6 +376,32 @@ const STEPS = [
   expect('move numbers logged as box changes with reason Rack change', S5.log.filter((e) => e.type === 'BOXQTY' && e.reason === 'Rack change').length === 4);
   expect('rack change card is gone once moved', await p5.$eval('#mvCard', (e) => e.hidden));
   await p5.close();
+
+  // help: type a question and the matching answer shows; box codes and sizes answer from the live data; cheat sheet prints on A4
+  const p6 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  p6.on('pageerror', (e) => errors.push(e.message));
+  await p6.route(/google|googleapis|gstatic/, (r) => r.abort());
+  const hs = JSON.parse(JSON.stringify(STATE)); hs.auth.level = 'Worker';
+  hs.shelf = { 'AL-C5-R3|DN-190x100-BR': { box: 'AL-C5-R3', net: 'DN-190x100-BR', qty: 9 } };
+  await p6.addInitScript((s) => { localStorage.setItem('armorx-inv-v1', s); window.print = () => {}; }, JSON.stringify(hs));
+  await p6.goto('file://' + path.join(__dirname, '..', 'index.html') + '#help'); await p6.waitForSelector('#hq');
+  expect('help page is open to a worker and fits a phone screen', (await p6.isVisible('#tabs a[href="#help"]')) && (await p6.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  const ask = async (q) => { await p6.fill('#hq', q); return p6.$$eval('#hOut details summary', (a) => a.map((e) => e.textContent)); };
+  expect('help: "room for 20" finds the box size answer first', /box holds 20/.test((await ask('what does room for 20 mean'))[0] || ''));
+  expect('help: "not in a box" answer shows', (await ask('not in a box')).some((x) => /Not in a box/.test(x)));
+  expect('help: "how do I undo a mistake" finds undo', /undo/i.test((await ask('how do I undo a mistake'))[0] || ''));
+  const boxAns = await ask('al c5 r3'); const boxTxt = await p6.textContent('#hOut details');
+  expect('help: a box code tells what is in that box', boxAns[0] === 'Box AL-C5-R3' && /Rack A · left side · column 5 · row 3/.test(boxTxt) && /190x100 Brown/.test(boxTxt) && /in this box 9/.test(boxTxt));
+  await ask('210 100 black');
+  expect('help: a size shows its boxes', /Size 210x100 Black/.test(await p6.textContent('#hOut summary')) && /AR-C1-R3/.test(await p6.textContent('#hOut details')));
+  expect('help: nonsense says no answer found', (await ask('zzqq')).length === 0 && /No answer found/.test(await p6.textContent('#hOut')));
+  await p6.click('#hPrint');
+  expect('cheat sheet prints on A4 portrait with every section', /A4 portrait/.test(await p6.textContent('#page-size')) && (await p6.$$('#print-area .cheat section')).length === 7);
+  await p6.goto('file://' + path.join(__dirname, '..', 'index.html') + '#racks'); await p6.click('[data-b="AL-C5-R3"]');
+  expect('rack map box says "holds 20"', /holds 20/.test(await p6.textContent('#boxInfo')));
+  await p6.click('#boxInfo a[href^="#help"]'); await p6.waitForSelector('#hq');
+  expect('help link from the rack map opens the numbers answer', /numbers mean/.test((await p6.$$eval('#hOut details summary', (a) => a.map((e) => e.textContent)))[0] || ''));
+  await p6.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();
