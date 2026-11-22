@@ -339,3 +339,39 @@ details.pv[open]>summary{margin-bottom:8px}
 }
 .cheat tr:last-child td,.cheat tr:last-child th{border-bottom:.3mm solid #000}
 @media print{#print-area .cheat table{font-size:8.5pt;line-height:1.25}#print-area .cheat th{font-size:8.5pt}#print-area .cheat th,#print-area .cheat td{padding:.7mm 1.3mm}#print-area .cheat section{margin-bottom:2.5mm}}
+/* SHELF LABEL (owner 22 Nov 2026): size + colour in big bold letters, box code small underneath. Same label on the shelf and the box front. */
+.lbl-loc{justify-content:center}
+.lbl-loc .ll-net{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;line-height:1;white-space:nowrap;display:flex;justify-content:center;align-items:baseline;gap:1.5mm}
+.lbl-loc .ll-size{font-size:19pt}
+.lbl-loc .ll-col{font-size:13pt}
+.lbl-loc .ll-code{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;font-size:7.5pt;display:flex;justify-content:center;gap:2.5mm;line-height:1.1}
+.lbl-loc .ll-code .role{border:.3mm solid #111;padding:0 1mm}
+@media print{#print-area .lbl-loc .ll-code .role{border-color:#000 !important}}
+/* top of the rack in full boxes of 25 */
+.pa-top{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.act.pa-full{font-size:1.15rem;padding:14px;font-weight:700}
+.pa-pick{background:#1f5c38;color:#fff;padding:8px 10px;border-radius:3px;font-size:.95rem}
+.pa-pick.no{background:#7a5414}
+/* boxes on top: one square per full box of 25, an outlined square with the count for a part box */
+.tbs{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.tb{font-style:normal;display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:28px;padding:0 4px;border-radius:3px;font-weight:700;font-size:.85rem;box-sizing:border-box}
+.tb.full{background:var(--ink);color:var(--bg)}
+.tb.part{border:2px dashed var(--ink);color:var(--ink)}
+.tb.more{border:1px solid var(--line);color:var(--muted)}
+/* rack map pop-up: in front of the screen, from the bottom on a phone */
+.pop{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center}
+.pop[hidden]{display:none}
+.pop-card{background:var(--surface);color:var(--ink);width:100%;max-width:560px;max-height:90vh;overflow:auto;border-radius:12px 12px 0 0;padding:16px 16px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:12px}
+@media (min-width:700px){.pop{align-items:center}.pop-card{border-radius:8px}}
+body.pop-on{overflow:hidden}
+.pop-net{font-family:var(--f-display);font-weight:700;font-size:1.7rem;line-height:1.1;display:flex;align-items:center;gap:8px}
+.pop-g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pop-t{border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.pop-t span{font-size:.8rem;color:var(--muted)}
+.pop-t b{font-size:1.9rem;line-height:1.05}
+.pop-t small{font-size:.8rem}
+.pop-t.big,.pop-t.wide{grid-column:1 / -1}
+.pop-t.big{background:var(--ink);color:var(--bg);border-color:var(--ink)}.pop-t.big span{color:var(--bg);opacity:.8}
+.pop-edit summary{cursor:pointer;font-size:.9rem;padding:4px 0}
+.pop-x{position:sticky;bottom:0;margin:0 -16px;width:calc(100% + 32px);font-size:1.25rem;padding:16px;border-radius:0}
+.pl-back{display:flex;gap:6px;flex-wrap:wrap}
