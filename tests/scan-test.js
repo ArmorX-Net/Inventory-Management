@@ -204,7 +204,7 @@ const STEPS = [
   expect('rack map tile shows the number in the box', (await page.textContent('[data-b="' + PA_BOX + '"] .q')) === '5');
   await page.click('[data-b="' + PA_BOX + '"]');
   expect('box info shows in this box, on top, total', (await page.textContent('#boxInfo')).includes('In this box'));
-  expect('box pop-up shows total, on top as boxes, out today', /Total in stock/.test(await page.textContent('#boxInfo')) && /Out today/.test(await page.textContent('#boxInfo')) && /Boxes on top/.test(await page.textContent('#boxInfo')));
+  expect('box pop-up shows total, on top as boxes, out today', /Total in stock/.test(await page.textContent('#boxInfo')) && /Out today/.test(await page.textContent('#boxInfo')) && /Boxes on top/.test(await page.textContent('#boxInfo')) && /= 5 in this box \+ .* on top/.test(await page.textContent('#boxInfo')));
   let s1 = (await st()).stock[PA];
   await page.click('.pop-edit summary'); await page.fill('#bqQty', '7'); await page.click('#bqSave');
   expect('box change needs a reason', (await page.textContent('#bqMsg')).includes('reason'));
@@ -239,6 +239,9 @@ const STEPS = [
   await page.waitForSelector('#xlUndo'); await page.click('#xlUndo');
   S = await st();
   expect('undo the upload: numbers and total back', S.shelf[PA_BOX + '|' + PA].qty === 5 && S.shelf['TOP|' + PA].qty === 0 && S.stock[PA] === s1);
+  await page.setInputFiles('#xlUp', { name: 'top.csv', mimeType: 'text/csv', buffer: Buffer.from('Net ID,Size,Color,Box,Box type,In box\n' + PA + ',210x90,Black,TOP,top,550\n') });
+  await page.waitForFunction(() => /rows read/.test(document.getElementById('xlMsg').textContent));
+  expect('upload: 550 on top (22 boxes of 25) is accepted, not refused', (await page.textContent('#xlMsg')).includes('1 change') && !(await page.textContent('#xlPrev')).includes('not a whole number'));
   // a real Excel file: compressed, shared strings, the first sheet stored as sheet2.xml
   await page.setInputFiles('#xlUp', path.join(__dirname, 'fixtures', 'excel-deflate.xlsx'));
   await page.waitForFunction(() => /rows read|Could not/.test(document.getElementById('xlMsg').textContent));
