@@ -6,7 +6,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 // 11 Nov 2026: no R6 backup boxes for now; extra stock sits on top of the racks (TOP, old labels 2F still work).
-const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3', OLD_R6 = 'AR-C4-R6', BIN = 'AR-C4-R1';
+const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3', OLD_R6 = 'AR-C4-R6', SLOW = 'AR-C4-R1'; // 22 Nov 2026: no 3-colour boxes, every box one colour
 function batch(id, made) {
   return { id, net: NET, qty: 20, good: 20, stage: 5, created: made, by: 'Manager', history: [{ stage: 0, by: 'Manager', qty: 20, rej: 0, t: made }], loc: null };
 }
@@ -71,10 +71,12 @@ const STEPS = [
   ['18', 'AR-C4-R3: 18 counted'],
   ['AR-C4-R2', 'Count the nets'],
   ['0', 'AR-C4-R2: 0 counted'],                  // an empty box is just 0
-  [BIN, 'color 1 of 3'],                         // 3-bin box: one number per color
-  ['4', 'color 2 of 3'],
-  ['3', 'color 3 of 3'],
-  ['2', 'AR-C4-R1: 2 counted'],
+  [SLOW, '185x100 Black'],                       // one colour per box: AR R1 C4-C6 = 185x100 Black, Brown, Grey
+  ['4', 'AR-C4-R1: 4 counted'],
+  ['AR-C5-R1', '185x100 Brown'],
+  ['3', 'AR-C5-R1: 3 counted'],
+  ['AR-C6-R1', '185x100 Grey'],
+  ['2', 'AR-C6-R1: 2 counted'],
   ['@tap', '[data-undo]', 'Tap why'],
   ['@tap', '[data-why="Wrong number"]', 'Undone:'],
   ['TOP', 'Top of racks'],
@@ -111,7 +113,7 @@ const STEPS = [
   expect('undone rack-in is marked UNDONE in the log', S.log.some((e) => e.type === 'IN' && e.wo === 'WO-0002' && / · UNDONE/.test(e.note)));
   expect('every undo saved its reason', S.log.filter((e) => e.type === 'UNDO').map((e) => e.reason).join() === 'Wrong number,Wrong number,Wrong box');
   expect('count change saved with its reason', S.log.some((e) => e.type === 'COUNT' && e.qty === 35 && e.reason === 'Picked without scanning'));
-  expect('box count: ' + Object.keys(S.counts).sort().join(' '), Object.keys(S.counts).sort().join(' ') === ['TOP|' + NET, 'AR-C4-R2|DN-185x95-BK', BIN + '|DN-185x100-BK', BIN + '|DN-185x100-BR', PICK + '|' + NET].sort().join(' '));
+  expect('box count: ' + Object.keys(S.counts).sort().join(' '), Object.keys(S.counts).sort().join(' ') === ['TOP|' + NET, 'AR-C4-R2|DN-185x85-BK', SLOW + '|DN-185x100-BK', 'AR-C5-R1|DN-185x100-BR', PICK + '|' + NET].sort().join(' '));
 
   // the manager applies the box count on the Stock page; a change needs a reason
   await page.evaluate(() => { location.hash = 'stock'; });
@@ -123,7 +125,7 @@ const STEPS = [
   S = await st();
   expect('applied: ' + NET + ' is ' + S.stock[NET] + ' (want 23 = 18 in box + 5 on top)', S.stock[NET] === 23);
   expect('applied: 185x100 Black 4, Brown 3, Grey not counted so unchanged', S.stock['DN-185x100-BK'] === 4 && S.stock['DN-185x100-BR'] === 3 && !S.stock['DN-185x100-GR']);
-  expect('box counted 0 is marked empty', (S.boxes['AR-C4-R2'] || {}).state === 'empty' && S.stock['DN-185x95-BK'] === 0);
+  expect('box counted 0 is marked empty', (S.boxes['AR-C4-R2'] || {}).state === 'empty' && S.stock['DN-185x85-BK'] === 0);
   expect('applied counts are cleared, nothing left over', Object.keys(S.counts).length === 0);
   expect('apply logged with the reason', S.log.some((e) => e.type === 'COUNT' && e.net === NET && e.qty === 23 && e.reason === 'Opening count'));
 
@@ -141,7 +143,7 @@ const STEPS = [
   await page.evaluate(() => { location.hash = 'scan'; }); await page.waitForSelector('#scanIn');
   const fbText = async () => (await page.textContent('#fb')).replace(/\s+/g, ' ');
   const scan = async (c) => { await page.fill('#scanIn', c); await page.press('#scanIn', 'Enter'); };
-  const PA = 'DN-210x90-BK', PA_BOX = 'CR-C4-R4';
+  const PA = 'DN-210x90-BK', PA_BOX = 'CL-C1-R3';
   const paBefore = (await st()).stock[PA] || 0;
   await scan('CMD-PUTAWAY');
   expect('put away mode asks for the size', (await fbText()).includes('Type the size') && !!(await page.$('#paSize')));
@@ -149,7 +151,7 @@ const STEPS = [
   expect('typing 210 9 lists 210 x 90 and friends', !!(await page.$('[data-pa-size="210x90"]')) && !(await page.$('[data-pa-size="205x90"]')));
   await page.click('[data-pa-size="210x90"]');
   await page.click('[data-pa-net="' + PA + '"]');
-  expect('the box shows in big letters with a plain hint', (await page.textContent('.pa-loc')) === PA_BOX && (await page.textContent('.pa-hint')).includes('Rack C · right side · column 4 · row 4'));
+  expect('the box shows in big letters with a plain hint', (await page.textContent('.pa-loc')) === PA_BOX && (await page.textContent('.pa-hint')).includes('Rack C · left side · column 1 · row 3'));
   await page.click('[data-pa-add="1"]');
   expect('+1 recorded', (await fbText()).includes('Now 1 there'));
   await page.click('.pa-same');
@@ -169,7 +171,7 @@ const STEPS = [
   await page.fill('#paSize', '210100'); await page.click('[data-pa-size="210x100"]'); await page.click('[data-pa-net="DN-210x100-BK"]');
   await scan('20');
   await page.click('.pa-same');
-  expect('a full box sends the next nets to the next box with room', (await page.textContent('.pa-loc')) === 'AR-C1-R1');
+  expect('a full box sends the next nets to the next box with room', (await page.textContent('.pa-loc')) === 'AR-C1-R2'); // 210x100: 3 boxes per colour (R2, R3, R4)
   await scan('CMD-CANCEL');
   // OUT: same steps as IN, the nets come out of the box
   expect('IN and OUT are the two big buttons at the bottom', (await page.$$eval('.acts-io .act.io', (a) => a.map((b) => b.textContent).join(','))) === 'IN,OUT');
@@ -345,12 +347,35 @@ const STEPS = [
   await p4.selectOption('#sSide', 'AR'); await p4.click('#pSB');
   expect('big side sign prints only the chosen side, on A4 landscape', (await p4.$$eval('#print-area .sign.big', (a) => a.map((e) => e.textContent).join('|'))).startsWith('AR185×80') && (await p4.$$('#print-area .sign')).length === 1 && /A4 landscape/.test(await p4.textContent('#page-size')));
   await p4.selectOption('#sSide', ''); await p4.click('#pS');
-  expect('small side signs still print all 6, 3 per A4 portrait', (await p4.$$('#print-area .sign:not(.big)')).length === 6 && /A4 portrait/.test(await p4.textContent('#page-size')));
+  const small = await p4.$$eval('#print-area .sign:not(.big)', (a) => a.map((e) => e.textContent));
+  expect('small side signs print all 8 (racks A-D), 3 per A4 portrait', small.length === 8 && /A4 portrait/.test(await p4.textContent('#page-size')));
   await p4.click('#pR');
   const sheets = await p4.$$eval('#print-area .rsheet', (a) => a.map((e) => e.querySelectorAll('tbody td').length + ':' + e.querySelector('.rs-side').textContent));
-  expect('rack layout prints one page per side with 30 boxes each', sheets.join(',') === 'AR,AL,BR,BL,CR,CL'.split(',').map((x) => '30:' + x).join(','));
+  expect('side sign DR shows its range', small.some((t) => t.startsWith('DR') && t.includes('215×80') && t.includes('220×80')));
+  expect('rack layout prints one page per side with 30 boxes each', sheets.join(',') === 'AR,AL,BR,BL,CR,CL,DR,DL'.split(',').map((x) => '30:' + x).join(','));
   expect('rack layout shows AR C1 R3 as 210x100 Black pick box', await p4.$eval('#print-area .rsheet', (e) => { const td = e.querySelectorAll('tbody tr')[2].querySelectorAll('td')[0]; return /210×100/.test(td.textContent) && /Black/.test(td.textContent) && !/BACKUP/.test(td.textContent); }));
+  expect('rack layout has no 3-colour boxes', !(await p4.$$eval('#print-area .rsheet', (a) => a.some((e) => /3 bins/.test(e.textContent)))));
   await p4.close();
+
+  // rack change: a box number left under an old 3-colour box moves to the net's new box, totals unchanged
+  const p5 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  p5.on('pageerror', (e) => errors.push(e.message));
+  await p5.route(/google|googleapis|gstatic/, (r) => r.abort());
+  const old = JSON.parse(JSON.stringify(STATE));
+  old.shelf = Object.assign({}, old.shelf, { 'AL-C2-R5|DN-185x120-BK': { box: 'AL-C2-R5', net: 'DN-185x120-BK', qty: 6 }, 'AR-C1-R1|DN-210x100-BK': { box: 'AR-C1-R1', net: 'DN-210x100-BK', qty: 15 } });
+  old.stock = Object.assign({}, old.stock, { 'DN-185x120-BK': 6, 'DN-210x100-BK': 15 });
+  await p5.addInitScript((s) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('armorx-inv-v1', s); sessionStorage.setItem('seeded', '1'); } }, JSON.stringify(old));
+  await p5.goto('file://' + path.join(__dirname, '..', 'index.html') + '#stock'); await p5.waitForSelector('#mvCard:not([hidden])');
+  const mv = await p5.textContent('#mvCard');
+  expect('rack change card lists old boxes and their new box', mv.includes('AL-C2-R5') && mv.includes('AL-C4-R5') && mv.includes('AR-C1-R1') && mv.includes('TOP'));
+  await p5.click('#mvGo');
+  const S5 = await p5.evaluate(() => JSON.parse(localStorage.getItem('armorx-inv-v1')));
+  expect('move numbers: new box has them, old box 0, totals unchanged',
+    S5.shelf['AL-C4-R5|DN-185x120-BK'].qty === 6 && S5.shelf['AL-C2-R5|DN-185x120-BK'].qty === 0 && S5.stock['DN-185x120-BK'] === 6 &&
+    S5.shelf['TOP|DN-210x100-BK'].qty === 15 && S5.shelf['AR-C1-R1|DN-210x100-BK'].qty === 0 && S5.stock['DN-210x100-BK'] === 15);
+  expect('move numbers logged as box changes with reason Rack change', S5.log.filter((e) => e.type === 'BOXQTY' && e.reason === 'Rack change').length === 4);
+  expect('rack change card is gone once moved', await p5.$eval('#mvCard', (e) => e.hidden));
+  await p5.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();

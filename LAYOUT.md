@@ -1,3 +1,33 @@
+# Doornet rack layout v8 (one colour per box, 22 Nov 2026)
+
+Owner decision 22 Nov 2026: pickers could not tell the colours apart in the shared 3-colour boxes, so every box now holds one size in one colour, and door nets use a 4th rack (D). The app (`data/doornets.js`), labels, side signs and the rack layout sheet follow this layout. The v7 plan below is kept as history.
+
+## The rules (what a picker learns)
+
+1. **Sizes go in number order** across all 4 racks, from 185x80 at the start of AR to 250x150 at the end of DL. Walking order: AR, AL, BR, BL, CR, CL, DR, DL. Each side has a sign with its range.
+2. **Every box holds one size in one colour.** Each row holds two sizes: one in C1-C3, the next in C4-C6 (smaller size on the left). Colours always Black, Brown, Grey left to right.
+3. **Fast sizes at waist and chest height:** on each side the 2 fastest sizes sit on R3, the next 2 on R4, then R2. The slowest go on R1 (floor) and R5 (top).
+4. **210x100 is the one exception:** AR C1-C3 (one column per colour), rows R2-R4, picked from R3; R2 and R4 are its backups. Extra 210x100 nets sit on top of the racks (TOP).
+
+## Sides
+
+| Side | Sizes |
+|---|---|
+| AR | 185x80 to 185x110 + 210x100 (C1-C3, R2-R4) |
+| AL | 185x115 to 190x115 |
+| BR | 190x120 to 195x120 |
+| BL | 200x70 to 200x115 |
+| CR | 200x120 to 205x115 |
+| CL | 205x120 to 210x120 |
+| DR | 215x80 to 220x80 |
+| DL | 220x85 to 250x150 |
+
+* 4 racks x 2 sides x 6 columns x 5 rows = **240 boxes, all used**: 77 sizes x 3 colours + 9 boxes of 210x100. No R6 boxes.
+* Racks E onward are free for window and exhaust nets.
+* `window.LAYOUT_MOVES` in `data/doornets.js` records where the nets of each old v7 box went. If a box number was kept under an old box, the Stock page shows **Rack change: move box numbers** and a manager moves them in one go (two BOXQTY events per net, reason "Rack change"; totals stay the same).
+
+---
+
 # Doornet rack layout v7 (final, 9 Nov 2026)
 
 Agreed with the owner on 9 Nov 2026 for a 2-week trial. The app (`data/doornets.js`), labels and scanning all follow this layout.

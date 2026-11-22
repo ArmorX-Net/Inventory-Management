@@ -22,10 +22,10 @@ for (const f of ['app.js', 'cam.js', 'data/doornets.js']) {
 try { new vm.Script(read('google-sheet/Code.gs'), { filename: 'Code.gs' }); check('Code.gs parses', true); }
 catch (e) { check('Code.gs parses', false, e.message); }
 
-// 2. Layout data (data/doornets.js) follows the agreed v7 plan.
+// 2. Layout data (data/doornets.js) follows the agreed plan: v8, one colour per box, racks A-D (owner 22 Nov 2026).
 const win = {};
 vm.runInNewContext(read('data/doornets.js'), { window: win });
-const NETS = win.DOORNETS, BOXES = win.BOXES, SIDES = win.SIDES, RANGES = win.SIDE_RANGES, STAR = win.STAR;
+const NETS = win.DOORNETS, BOXES = win.BOXES, SIDES = win.SIDES, RANGES = win.SIDE_RANGES, STAR = win.STAR, MOVES = win.LAYOUT_MOVES || {};
 const COLORS = ['Black', 'Brown', 'Grey'];
 const sz = (s) => s.split('x').map(Number);
 const cmpSize = (a, b) => { const x = sz(a), y = sz(b); return x[0] - y[0] || x[1] - y[1]; };
@@ -41,22 +41,16 @@ sizes.forEach((s) => {
 });
 check('no sales numbers in the public repo (perDay all 0)', NETS.every((n) => !n.perDay));
 
-const CODE = /^([A-C][LR])-C([1-6])-R([1-6])$/;
+const CODE = /^([A-D][LR])-C([1-6])-R([1-5])$/;
 const codes = Object.keys(BOXES);
-check('216 box slots (3 racks x 2 sides x 6 columns x 6 rows)', codes.length === 216, 'found ' + codes.length);
+check('240 box slots (4 racks x 2 sides x 6 columns x 5 rows, no R6)', codes.length === 240, 'found ' + codes.length);
 codes.forEach((c) => check('location code ' + c + ' looks like AL-C5-R3', CODE.test(c)));
-check('sides are AR, AL, BR, BL, CR, CL', JSON.stringify(SIDES) === JSON.stringify(['AR', 'AL', 'BR', 'BL', 'CR', 'CL']), JSON.stringify(SIDES));
+check('sides are AR, AL, BR, BL, CR, CL, DR, DL', JSON.stringify(SIDES) === JSON.stringify(['AR', 'AL', 'BR', 'BL', 'CR', 'CL', 'DR', 'DL']), JSON.stringify(SIDES));
 
 codes.forEach((c) => {
   const b = BOXES[c], m0 = CODE.exec(c), row = m0 ? Number(m0[3]) : 0;
   check(c + ' lists only known nets', b.nets.length > 0 && b.nets.every((id) => byId[id]), JSON.stringify(b.nets));
-  if (row === 6) check(c + ' (R6) is backup only', b.role === 'backup', 'role ' + b.role);
-  if (b.kind === 'own') check(c + ' own box holds one net', b.nets.length === 1);
-  if (b.kind === 'bin') {
-    const ns = b.nets.map((id) => byId[id]);
-    check(c + ' 3-bin box holds one size in Black, Brown, Grey order',
-      ns.length === 3 && ns.every((n) => n.size === ns[0].size) && ns.map((n) => n.color).join() === COLORS.join(), b.nets.join());
-  }
+  check(c + ' holds one size in one colour (no 3-colour boxes)', b.kind === 'own' && b.nets.length === 1, b.kind + ' ' + b.nets.join());
   b.nets.forEach((id) => {
     const n = byId[id]; if (!n) return;
     if (b.role === 'pick') check(c + ' is the pick box of ' + id, n.pick === c, 'net says pick ' + n.pick);
@@ -71,6 +65,8 @@ NETS.forEach((n) => {
 });
 
 // Sizes in number order: each side's range is in order, and every net sits on the side whose range holds its size.
+// Sizes in one number order across racks A-D: each side's range follows the one before, every net sits on the side
+// whose range holds its size, and each row holds two sizes (C1-C3, C4-C6), smaller on the left.
 for (let i = 1; i < SIDES.length; i++) {
   check('side ' + SIDES[i] + ' range starts after ' + SIDES[i - 1], cmpSize(RANGES[SIDES[i]][0], RANGES[SIDES[i - 1]][1]) > 0);
 }
@@ -78,6 +74,22 @@ NETS.forEach((n) => {
   const side = n.pick.slice(0, 2), r = RANGES[side];
   const inRange = cmpSize(n.size, r[0]) >= 0 && cmpSize(n.size, r[1]) <= 0;
   check(n.id + ' sits on the side that covers its size', n.size === STAR ? side === 'AR' : inRange, 'pick ' + n.pick + ', side range ' + r.join(' to '));
+});
+SIDES.forEach((side) => { for (let r = 1; r <= 5; r++) {
+  const L = byId[BOXES[side + '-C1-R' + r].nets[0]], R = byId[BOXES[side + '-C4-R' + r].nets[0]];
+  if (L.size !== STAR) check(side + ' R' + r + ' smaller size on the left', cmpSize(L.size, R.size) < 0, L.size + ' | ' + R.size);
+  [[1, 2, 3], [4, 5, 6]].forEach((cs) => { const ns = cs.map((c) => byId[BOXES[side + '-C' + c + '-R' + r].nets[0]]);
+    check(side + ' R' + r + ' C' + cs[0] + '-C' + cs[2] + ' one size in Black, Brown, Grey', ns.every((x) => x.size === ns[0].size) && ns.map((x) => x.color).join() === COLORS.join()); });
+} });
+// Old boxes: every remembered move goes to the net's home box now, or TOP.
+Object.entries(MOVES).forEach(([k, to]) => {
+  const [from, id] = k.split('|'), n = byId[id];
+  check('move ' + k + ' goes to a home of that net or TOP', n && (to === 'TOP' || [n.pick].concat(n.backups || []).includes(to)) && !(BOXES[from] && BOXES[from].nets.includes(id)), to);
+});
+// 210x100 keeps 3 boxes per colour: R2, R3 (pick), R4.
+COLORS.forEach((col, i) => {
+  const n = NETS.find((x) => x.size === STAR && x.color === col);
+  check(STAR + ' ' + col + ' backups are R2 and R4', n && JSON.stringify(n.backups) === JSON.stringify(['AR-C' + (i + 1) + '-R2', 'AR-C' + (i + 1) + '-R4']), n && JSON.stringify(n.backups));
 });
 // 210x100 owns AR C1-C3, one column per color, picked from R3.
 COLORS.forEach((col, i) => {
