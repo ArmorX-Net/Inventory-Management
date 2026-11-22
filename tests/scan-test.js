@@ -11,7 +11,7 @@ function batch(id, made) {
   return { id, net: NET, qty: 20, good: 20, stage: 5, created: made, by: 'Manager', history: [{ stage: 0, by: 'Manager', qty: 20, rej: 0, t: made }], loc: null };
 }
 const STATE = {
-  seq: 2, stock: {}, log: [], boxes: {}, demo: false, layout: 'v7', settings: { batchSize: '50x25' },
+  seq: 2, stock: {}, log: [], boxes: {}, demo: false, layout: 'v7', settings: { batchSize: '50x25', noCheck: { 'EMP-06': true } }, // check before saving: off for this tester (tested on its own below)
   workers: [{ id: 'EMP-06', name: 'Test Picker', role: 'Racks & dispatch' }, { id: 'EMP-07', name: 'Test Stitcher', role: 'Stitching' }],
   auth: { t: 'test-token', exp: Date.now() + 864e5, id: 'EMP-06', name: 'Test Picker', level: 'Owner' }, // signed in as the owner (no sheet in this test)
   batches: { 'WO-0001': batch('WO-0001', '2026-11-01T08:00:00.000Z'), 'WO-0002': batch('WO-0002', '2026-11-05T08:00:00.000Z') },
@@ -65,9 +65,10 @@ const STEPS = [
   [PICK, 'Enter the quantity'],
   ['37', 'now 37 in total'],                     // same as the system: no reason needed
   // box count (opening count): scan the shelf, type the number
-  ['CMD-BOXCOUNT', 'BOX COUNT mode on'],
+  ['CMD-BOXCOUNT', 'BOX RECOUNT mode on'],
   [PICK, 'Count the nets'],
-  ['50', 'type 50 again'],                       // a big number is checked once, never blocked
+  ['50', 'Check this number'],                   // a very high number asks "Are you sure?" once, never blocked
+  ['@tap', '[data-cfm="0"]', 'Not saved'],
   ['18', 'AR-C4-R3: 18 counted'],
   ['AR-C4-R2', 'Count the nets'],
   ['0', 'AR-C4-R2: 0 counted'],                  // an empty box is just 0
@@ -81,7 +82,7 @@ const STEPS = [
   ['@tap', '[data-why="Wrong number"]', 'Undone:'],
   ['TOP', 'Top of racks'],
   ['@floor', 'Black', 'Count the nets'],
-  ['5', 'on top of the racks: 5 counted'],
+  ['@toppart', '5', 'on top of the racks: 1 part box (5) = 5 counted'], // top of the racks: full boxes + part boxes
   ['CMD-CANCEL', 'Cleared'],
 ];
 
@@ -100,6 +101,7 @@ const STEPS = [
     let code = step[0], want = step[1];
     if (code === '@tap') { await page.click(step[1]); code = 'tap ' + step[1].replace(/\[data-|\]|"/g, ''); want = step[2]; }
     else if (code === '@floor') { await page.selectOption('#bcSize', '185x90'); await page.click('[data-col="' + step[1] + '"]'); code = '185x90 ' + step[1]; want = step[2]; }
+    else if (code === '@toppart') { await page.fill('#btAdd', step[1]); await page.click('#btAddB'); await page.click('#btSave'); code = 'part ' + step[1]; want = step[2]; }
     else { await page.fill('#scanIn', code); await page.press('#scanIn', 'Enter'); }
     const got = (await page.textContent('#fb')).replace(/\s+/g, ' ').trim();
     const ok = got.includes(want);
@@ -162,13 +164,14 @@ const STEPS = [
   expect('scanning the wrong shelf says where it goes', (await fbText()).includes('Wrong box'));
   await scan(PA_BOX);
   expect('scanning the right shelf confirms it', (await fbText()).includes('Right box'));
-  await page.click('[data-pa-top="25"]');
-  expect('box full: one tap puts a full box (25) on top', (await st()).shelf['TOP|' + PA].qty === 25 && /full box/.test(await fbText()));
+  expect('the top block shows how many are on top now', (await page.textContent('.pa-top-now')).includes('On top now'));
+  await page.click('[data-pa-topfull]');
+  expect('box full: Full boxes 1, Put on top = a full box (25) on top', (await st()).shelf['TOP|' + PA].qty === 25 && /full box/.test(await fbText()));
   await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
   expect('undo takes the full box back off the top', !(await st()).shelf['TOP|' + PA]);
   await page.fill('#paSize', '2109'); await page.click('[data-pa-size="210x90"]'); await page.click('[data-pa-net="' + PA + '"]');
   await page.fill('#paTopQty', '3'); await page.click('[data-pa-topother]');
-  expect('box not full: type 3, 3 on top of the rack', (await fbText()).includes('top of the rack') && (await st()).shelf['TOP|' + PA].qty === 3);
+  expect('part box: type 3, a part box of 3 on top of the rack', (await fbText()).includes('top of the rack') && (await st()).shelf['TOP|' + PA].qty === 3 && (await st()).shelf['TOP|' + PA].parts.join() === '3');
   await page.click('[data-undo]'); await page.click('[data-why="Wrong number"]');
   S = await st();
   expect('undo takes only the last add back off: box 5, nothing on top', S.shelf[PA_BOX + '|' + PA].qty === 5 && !S.shelf['TOP|' + PA] && !!(await page.$('#paSize')));
@@ -203,8 +206,10 @@ const STEPS = [
   await page.evaluate(() => { location.hash = 'racks'; }); await page.waitForSelector('[data-b="' + PA_BOX + '"]');
   expect('rack map tile shows the number in the box', (await page.textContent('[data-b="' + PA_BOX + '"] .q')) === '5');
   await page.click('[data-b="' + PA_BOX + '"]');
-  expect('box info shows in this box, on top, total', (await page.textContent('#boxInfo')).includes('In this box'));
-  expect('box pop-up shows total, on top as boxes, out today', /Total in stock/.test(await page.textContent('#boxInfo')) && /Out today/.test(await page.textContent('#boxInfo')) && /Boxes on top/.test(await page.textContent('#boxInfo')) && /= 5 in this box \+ .* on top/.test(await page.textContent('#boxInfo')));
+  expect('box info marks this box', (await page.textContent('#boxInfo')).includes('this box'));
+  const popTxt = await page.textContent('#boxInfo');
+  expect('box pop-up: total first, a line per place (pick box, top), adds up, out today, no box pictures', /Total in stock/.test(popTxt) && /Pick box CL-C1-R3/.test(popTxt) && /On top of the racks/.test(popTxt) && /Adds up to/.test(popTxt) && /Out today/.test(popTxt) && /Ready to pick on the racks/.test(popTxt) && !(await page.$('#boxInfo .tb')));
+  expect('box pop-up: the lines add up to the total', await page.$eval('#boxInfo', (e) => e.querySelector('.pop-tot b').textContent === e.querySelector('.pl.sum b').textContent));
   let s1 = (await st()).stock[PA];
   await page.click('.pop-edit summary'); await page.fill('#bqQty', '7'); await page.click('#bqSave');
   expect('box change needs a reason', (await page.textContent('#bqMsg')).includes('reason'));
@@ -327,7 +332,10 @@ const STEPS = [
   expect('reads send the sign-in token, never a key', gets.length > 0 && gets.every((u) => /[?&]t=EMP-07\./.test(u) && !/key=/.test(u)));
   const vis = await p2.$$eval('#tabs a', (as) => as.filter((a) => !a.hidden).map((a) => a.getAttribute('href')).join(' '));
   expect('worker tabs: ' + vis, vis === '#scan #pick #racks #refill #help');
-  expect('worker has no Count button', !(await p2.$('[data-act="COUNT"]')) && !!(await p2.$('[data-act="BOXCOUNT"]')));
+  expect('worker sees only IN and OUT (no Count, no Box recount, no other actions)', (await p2.$$eval('#acts [data-act]', (a) => a.map((b) => b.dataset.act).join())) === 'PUTAWAY,TAKEOUT');
+  await p2.fill('#scanIn', 'CMD-BOXCOUNT'); await p2.press('#scanIn', 'Enter');
+  expect('worker CMD-BOXCOUNT refused: box recount is for managers', (await p2.textContent('#fb')).includes('for managers'));
+  expect('scan station fits a phone screen', (await p2.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await p2.fill('#scanIn', 'CMD-COUNT'); await p2.press('#scanIn', 'Enter');
   expect('worker CMD-COUNT refused', (await p2.textContent('#fb')).includes('Only a manager'));
   await p2.evaluate(() => { location.hash = 'stock'; });
@@ -446,6 +454,80 @@ const STEPS = [
   await p6.click('#boxInfo a[href^="#help"]'); await p6.waitForSelector('#hq');
   expect('help link from the rack map opens the numbers answer', /numbers mean/.test((await p6.$$eval('#hOut details summary', (a) => a.map((e) => e.textContent)))[0] || ''));
   await p6.close();
+  if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
+
+  // ---- phone: check before saving, "Are you sure?", the "i", top of the racks as full and part boxes, pick list short lines ----
+  const p7 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  p7.on('pageerror', (e) => errors.push(e.message));
+  await p7.route(/google|googleapis|gstatic/, (r) => r.abort());
+  const cs = JSON.parse(JSON.stringify(STATE)); cs.settings.noCheck = {};
+  cs.stock = { [NET]: 60 }; cs.shelf = { [PICK + '|' + NET]: { box: PICK, net: NET, qty: 13 }, ['TOP|' + NET]: { box: 'TOP', net: NET, qty: 47, parts: [22] } };
+  await p7.addInitScript((s) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('armorx-inv-v1', s); sessionStorage.setItem('seeded', '1'); } window.print = () => {}; }, JSON.stringify(cs));
+  await p7.goto('file://' + path.join(__dirname, '..', 'index.html') + '#scan'); await p7.waitForSelector('#scanIn');
+  const S7 = () => p7.evaluate(() => JSON.parse(localStorage.getItem('armorx-inv-v1')));
+  const top7 = async () => (await S7()).shelf['TOP|' + NET];
+  expect('manager sees IN, OUT and Box recount, each with an "i"', (await p7.$$eval('#acts [data-act]', (a) => a.map((b) => b.dataset.act).join())) === 'PUTAWAY,TAKEOUT,BOXCOUNT' && (await p7.$$('#acts .ibtn')).length === 3);
+  await p7.click('#acts [data-tip="IN"]');
+  expect('the "i" opens three short lines', (await p7.isVisible('#tipPop')) && (await p7.$$('#tipPop .tip-l')).length === 3);
+  await p7.click('#tipPop button[data-tipx]');
+  expect('OK closes it', await p7.isHidden('#tipPop'));
+  expect('check before saving is on by default', await p7.isChecked('#cfmTg'));
+  await p7.click('[data-act="TAKEOUT"]'); await p7.fill('#paSize', '18590'); await p7.click('[data-pa-size="185x90"]'); await p7.click('[data-pa-net="' + NET + '"]');
+  expect('OUT shows what is on top as boxes', (await p7.textContent('.pa-top-now')).includes('1 full box + 1 part box (22) = 47'));
+  await p7.click('[data-pa-add="2"]');
+  let cf = (await p7.textContent('.cfm')).replace(/\s+/g, ' ');
+  expect('check before saving: shows box 13 → 11 and total 60 → 58, nothing saved yet', /13 → 11/.test(cf) && /60 → 58/.test(cf) && (await S7()).stock[NET] === 60);
+  await p7.click('[data-cfm="0"]');
+  expect('Back: nothing saved', (await S7()).stock[NET] === 60);
+  await p7.click('[data-pa-add="2"]'); await p7.click('[data-cfm="1"]');
+  expect('Yes, save: box 11, stock 58', (await S7()).stock[NET] === 58 && (await S7()).shelf[PICK + '|' + NET].qty === 11);
+  await p7.click('.pa-same'); await p7.click('[data-pa-toppart="22"]');
+  cf = (await p7.textContent('.cfm')).replace(/\s+/g, ' ');
+  expect('OUT the part box of 22: check shows the top before and after', cf.includes('1 full box + 1 part box (22) = 47 → 1 full box = 25'));
+  await p7.click('[data-cfm="1"]');
+  expect('saved: top 25 with no part box, stock 36', (await top7()).qty === 25 && !((await top7()).parts || []).length && (await S7()).stock[NET] === 36);
+  await p7.click('[data-undo]'); await p7.click('[data-why="Wrong number"]');
+  expect('undo brings the part box of 22 back', (await top7()).qty === 47 && ((await top7()).parts || []).join() === '22' && (await S7()).stock[NET] === 58);
+  await p7.click('.pa-same'); await p7.fill('#paTopQty', '3'); await p7.click('[data-pa-topother]'); await p7.click('[data-cfm="1"]');
+  expect('OUT 3 nets from the top: the part box of 22 becomes 19', (await top7()).qty === 44 && ((await top7()).parts || []).join() === '19');
+  await p7.click('.cfm-tg label');
+  expect('check before saving switched off for this person', !(await p7.isChecked('#cfmTg')) && (await S7()).settings.noCheck['EMP-06'] === true);
+  await p7.click('[data-act="PUTAWAY"]'); await p7.click('.pa-same');
+  await p7.click('[data-pa-add="1"]');
+  expect('check off: IN +1 saves at once', !(await p7.$('.cfm')) && (await S7()).shelf[PICK + '|' + NET].qty === 12);
+  await p7.click('.pa-same'); await p7.fill('#paQty', '80'); await p7.click('[data-pa-other]');
+  expect('a very high number still asks "Are you sure?", even with the check off', /Are you sure/.test(await p7.textContent('.cfm')) && (await S7()).shelf[PICK + '|' + NET].qty === 12);
+  await p7.click('[data-cfm="1"]');
+  expect('no limit: Yes saves 80 more in the box (92)', (await S7()).shelf[PICK + '|' + NET].qty === 92);
+  await p7.click('.pa-same'); await p7.fill('#paTopN', '2'); await p7.click('[data-pa-topfull]');
+  await p7.click('.pa-same'); await p7.fill('#paTopQty', '14'); await p7.click('[data-pa-topother]');
+  expect('IN on top: 2 full boxes, then a part box of 14: 44 + 50 + 14 = 108', (await top7()).qty === 108 && ((await top7()).parts || []).join() === '19,14');
+  expect('scan station fits the phone with the top block open', (await p7.click('.pa-same'), (await p7.evaluate(() => document.documentElement.scrollWidth)) <= 390));
+  const stock7 = (await S7()).stock[NET];
+  await p7.evaluate(() => { location.hash = 'pick'; }); await p7.waitForSelector('#pIn');
+  await p7.fill('#pIn', '185x90 Black 100'); await p7.click('#pGo');
+  expect('pick list: 100 wanted, 92 in the box: 8 short, says what is on top', /8 short/.test(await p7.textContent('.pl-short')) && /108/.test(await p7.textContent('.pl-short')));
+  await p7.click('#pFin');
+  expect('Final asks for a choice on the short line first', /choose Keep, Cut or Remove/.test(await p7.textContent('#pMsg')) && !(await p7.$('#pYes')));
+  await p7.click('[data-pchoice="' + NET + '|cut"]');
+  expect('cut: the list says 92', /92/.test(await p7.textContent('#pOut')));
+  await p7.click('#pFin'); await p7.click('#pYes');
+  expect('Final takes 92 off stock (not 100)', (await S7()).stock[NET] === stock7 - 92);
+  await p7.evaluate(() => { location.hash = 'racks'; }); await p7.waitForSelector('[data-b="' + PICK + '"]');
+  await p7.click('[data-b="' + PICK + '"]'); await p7.click('.pop-edit summary');
+  await p7.click('[data-seg="full"]'); await p7.fill('#bqFull', '5');
+    expect('manager edit of full boxes: preview shows before → after and the new total', /3 full boxes \+ 2 part boxes \(19, 14\) = 108 → 5 full boxes \+ 2 part boxes \(19, 14\) = 158/.test(await p7.textContent('#bqPrev')));
+  await p7.selectOption('#bqWhy', { index: 1 }); await p7.click('#bqSave');
+  expect('saved: 5 full boxes on top, part boxes kept', (await top7()).qty === 158 && ((await top7()).parts || []).join() === '19,14');
+  await p7.waitForSelector('#boxInfo:not([hidden]) .pop-edit'); await p7.click('.pop-edit summary'); await p7.click('[data-seg="part"]');
+  await p7.click('#bqTChips [data-rm="0"]'); await p7.fill('#bqTAdd', '9'); await p7.click('#bqTAddB');
+  await p7.selectOption('#bqWhy', { index: 1 }); await p7.click('#bqSave');
+  expect('part boxes changed: 19 off, 9 on: 125 + 14 + 9 = 148', (await top7()).qty === 148 && ((await top7()).parts || []).join() === '14,9');
+  await p7.waitForSelector('#boxInfo:not([hidden]) .pop-tot');
+    expect('the pop-up shows the open pick list as a line, so the lines add up to the total, no warning', !(await p7.$('#boxInfo .pop-warn')) && /On the pick list/.test(await p7.textContent('#boxInfo')));
+  expect('the pop-up lines add up to the total', await p7.$eval('#boxInfo', (e) => e.querySelector('.pop-tot b').textContent === e.querySelector('.pl.sum b').textContent));
+  expect('rack pop-up fits the phone', (await p7.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await p7.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();
