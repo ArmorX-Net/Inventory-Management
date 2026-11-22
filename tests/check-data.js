@@ -15,7 +15,7 @@ function check(name, ok, detail) {
 }
 
 // 1. Every script parses.
-for (const f of ['app.js', 'cam.js', 'data/doornets.js']) {
+for (const f of ['app.js', 'cam.js', 'data/doornets.js', 'data/help.js']) {
   try { execFileSync(process.execPath, ['--check', path.join(root, f)], { stdio: 'pipe' }); check(f + ' parses', true); }
   catch (e) { check(f + ' parses', false, String(e.stderr || e.message).split('\n').slice(0, 4).join(' ')); }
 }
