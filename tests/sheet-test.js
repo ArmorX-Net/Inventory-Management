@@ -68,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 13 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 14 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -126,7 +126,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 13', state().v === 13);
+expect('doGet says version 14', state().v === 14);
 expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
 expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
   sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
@@ -332,7 +332,7 @@ expect('box recount is for managers: a worker\'s is refused', r.refused.length =
   r = as(WK, [{ id: 'rt2', type: 'WORIGHT', badge: 'EMP-07', on: true, t: at(0) }]);
   expect('a worker cannot give label printing', r.refused.length === 1);
   const g0 = get(WK);
-  expect('everyone reads the open orders with every net; workers get no numbers per person', g0.v === 13 && g0.wo.orders.length === 3 && g0.wo.orders[0].nets.length === 3 && g0.wo.orders[0].nets[0][2] === 'wait' && g0.wo.daily.length === 0 && g0.wo.rights.me === true);
+  expect('everyone reads the open orders with every net; workers get no numbers per person', g0.v === 14 && g0.wo.orders.length === 3 && g0.wo.orders[0].nets.length === 3 && g0.wo.orders[0].nets[0][2] === 'wait' && g0.wo.daily.length === 0 && g0.wo.rights.me === true);
   const C1 = 'WOMQD001-01/3', C2 = 'WOMQD001-02/3', C3 = 'WOMQD001-03/3';
   r = as(WK, [{ id: 'w-r1', type: 'WOSTEP', code: C1, act: 'RECV', from: [0, 'wait'], t: at(0) }]);
   expect('Cutting received: saved', !r.refused.length && netRow(C1)[5] === 'recv' && netRow(C1)[6] === 'EMP-07');
@@ -425,6 +425,47 @@ expect('box recount is for managers: a worker\'s is refused', r.refused.length =
   expect('clear all work orders: none left, and the next order is WOMQD001 again', !r.refused.length && get(T.token).wo.orders.length === 0 && nets().length === 0 && call({ action: 'wocreate', t: T.token, req: 'rq9', orders: [{ net: WN, qty: 2 }] }).orders[0].id === 'WOMQD001');
   r = as(T.token, [{ id: 'del-none', type: 'WODELETE', orders: ['WOMQD777'], reason: 'x', t: at(76) }]);
   expect('delete of an order that is not there is refused', r.refused.length === 1);
+  // ---- version 14: one order with many sizes, a purpose (FBA ...), and where packed nets go ----
+  const GN = 'DN-210x105-GR', stkOf = (id) => get(T.token).stock[id] || 0;
+  r = call({ action: 'wocreate', t: T.token, req: 'rq14', orders: [{ lines: [{ net: WN, qty: 2 }, { net: GN, qty: 1 }, { net: WN, qty: 1 }], purpose: 'FBA', ref: 'FBA15XYZ', note: 'Shipment for Mumbai', due: at(600) }] });
+  const MO = r.ok && r.orders[0];
+  expect('v14: one order holds many sizes (same size twice adds up): 4 nets, 2 lines, FBA with the shipment ID', MO && MO.qty === 4 && MO.lines.length === 2 && MO.lines[0].qty === 3 && MO.purpose === 'FBA' && MO.ref === 'FBA15XYZ' && MO.net === 'MIX' && MO.note === 'Shipment for Mumbai');
+  const M1 = MO.id + '-01/4', M4 = MO.id + '-04/4';
+  expect('v14: the nets are numbered over the whole order, each with its own size', netRow(M1)[3] === WN && netRow(MO.id + '-03/4')[3] === WN && netRow(M4)[3] === GN);
+  expect('v14: an order over 1000 nets in all is refused', !call({ action: 'wocreate', t: T.token, orders: [{ lines: [{ net: WN, qty: 600 }, { net: GN, qty: 500 }] }] }).ok);
+  as(T.token, [{ id: 'v14-set', type: 'WOSET', codes: [M1, M4, MO.id + '-02/4'], step: 5, status: 'wait', reason: 'Test', t: at(80) }]);
+  const fs0 = stkOf(WN), gs0 = stkOf(GN);
+  r = as(WK, [{ id: 'v14-rd0', type: 'WOSTEP', code: M1, act: 'READY', from: [5, 'wait'], t: at(81) }]);
+  expect('v14: Ready needs where it goes', r.refused.length === 1);
+  r = as(WK, [{ id: 'v14-rd', type: 'WOSTEP', code: M1, act: 'READY', dest: 'FBA', from: [5, 'wait'], t: at(81) }]);
+  expect('v14: packed net Ready for FBA: kept apart with the shipment ID, NOT in stock', !r.refused.length && netRow(M1)[5] === 'ready' && netRow(M1)[18] === 'FBA' && netRow(M1)[19] === 'FBA15XYZ' && stkOf(WN) === fs0);
+  const rk = (get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Rack-in') || { done: 0 }).done;
+  expect('v14: the Ready scan counts as the last step for the person', rk >= 1);
+  r = as(WK, [{ id: 'v14-in', type: 'WOSTEP', code: M4, act: 'RACKIN', loc: 'TOP', from: [5, 'wait'], t: at(82) }]);
+  expect('v14: a worker can still send a packed net of an FBA order to the racks: stock +1', !r.refused.length && stkOf(GN) === gs0 + 1 && netRow(M4)[5] === 'racked' && netRow(M4)[18] === 'Top');
+  r = as(WK, [{ id: 'v14-mv0', type: 'WOSTEP', code: M1, act: 'RACKIN', loc: 'TOP', from: [6, 'ready'], t: at(83) }]);
+  expect('v14: a worker cannot move a ready (FBA) net into stock', r.refused.length === 1 && /manager/.test(r.refused[0].why) && stkOf(WN) === fs0);
+  r = as(T.token, [{ id: 'v14-mv', type: 'WOSTEP', code: M1, act: 'RACKIN', loc: 'TOP', from: [6, 'ready'], t: at(84) }]);
+  expect('v14: a manager moves a ready net to the top of the racks: stock +1 now', !r.refused.length && stkOf(WN) === fs0 + 1 && netRow(M1)[5] === 'racked');
+  const rk2 = (get(T.token).wo.daily.find((x) => x.who === 'EMP-00' && x.step === 'Rack-in') || { done: 0 }).done;
+  r = as(T.token, [{ id: 'v14-mvu', type: 'WOUNDO', undoes: 'v14-mv', reason: 'Wrong', t: at(85) }]);
+  expect('v14: undo the move: stock back, the net is ready for FBA again', !r.refused.length && stkOf(WN) === fs0 && netRow(M1)[5] === 'ready' && (get(T.token).wo.daily.find((x) => x.who === 'EMP-00' && x.step === 'Rack-in') || { done: 0 }).done === rk2);
+  r = as(T.token, [{ id: 'v14-bulk', type: 'WOBULK', order: MO.id, act: 'READY', dest: 'FBA', t: at(86) }]);
+  let mq = get(T.token).wo.orders.find((o) => o.id === MO.id);
+  expect('v14: manager: all packed nets ready for FBA at once; the order shows 2 ready, 1 racked', !r.refused.length && mq.ready === 2 && mq.racked === 1 && mq.nets[1][10] === WN && mq.nets[1][11] === 'FBA');
+  r = as(T.token, [{ id: 'v14-dest', type: 'WODEST', order: MO.id, purpose: 'FBA', ref: 'FBA99NEW', comment: 'moved shipment', note: 'Goes to: FBA', t: at(87) }]);
+  mq = get(T.token).wo.orders.find((o) => o.id === MO.id);
+  expect('v14: manager changes the shipment ID: the ready nets follow', !r.refused.length && mq.ref === 'FBA99NEW' && netRow(M1)[19] === 'FBA99NEW' && mq.note === 'moved shipment');
+  expect('v14: a worker cannot change where an order goes', as(WK, [{ id: 'v14-dw', type: 'WODEST', order: MO.id, purpose: 'Rack', t: at(87) }]).refused.length === 1);
+  r = as(WK, [{ id: 'v14-sh', type: 'WOSTEP', code: M1, act: 'SHIP', from: [6, 'ready'], t: at(88) }]);
+  expect('v14: Shipped: the net leaves, stock never changed', !r.refused.length && netRow(M1)[5] === 'shipped' && stkOf(WN) === fs0);
+  expect('v14: the order is not done while a net is still in production', get(T.token).wo.orders.find((o) => o.id === MO.id).state !== 'done');
+  as(T.token, [{ id: 'v14-set3', type: 'WOSET', codes: [MO.id + '-03/4'], step: 5, status: 'wait', reason: 'Test', t: at(88) }, { id: 'v14-bulk3', type: 'WOBULK', order: MO.id, act: 'READY', dest: 'FBA', t: at(88) }]);
+  expect('v14: every net packed and ready: the order is done (ready to ship) and still shows its nets', (() => { const o = get(T.token).wo.orders.find((x) => x.id === MO.id); return o.state === 'done' && o.ready === 2 && o.nets.length === 4; })());
+  r = as(T.token, [{ id: 'v14-bs', type: 'WOBULK', order: MO.id, act: 'SHIP', t: at(89) }]);
+  mq = get(T.token).wo.orders.find((o) => o.id === MO.id);
+  expect('v14: whole order shipped at once: 3 shipped, 1 racked, done', !r.refused.length && mq.shipped === 3 && mq.racked === 1 && mq.ready === 0 && mq.state === 'done');
+  expect('v14: old one-size orders still work (purpose Rack)', call({ action: 'wocreate', t: T.token, orders: [{ net: WN, qty: 1 }] }).orders[0].purpose === 'Rack');
   sheets.Snapshots.data.splice(1); // the snapshot tests below start with no copies
 }
 

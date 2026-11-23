@@ -573,14 +573,22 @@ const STEPS = [
   await p8.goto('file://' + path.join(__dirname, '..', 'index.html') + '#orders'); await p8.waitForSelector('#woNew');
   const S8 = () => p8.evaluate(() => JSON.parse(localStorage.getItem('armorx-inv-v1')));
   const WN = 'DN-210x120-BK';
-  await p8.fill('#woSize', '210x120'); await p8.selectOption('#woCol', 'Black'); await p8.fill('#woQty', '2'); await p8.click('#woNew button');
+  await p8.fill('#woSize', '210x120'); await p8.selectOption('#woCol', 'Black'); await p8.fill('#woQty', '2'); await p8.click('#woMakeB');
   await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="S"]');
   const wl = await p8.$$eval('#print-area .lbl-wo', (l) => l.map((e) => ({ net: e.querySelector('.wl-net').textContent, code: e.querySelector('.wl-code').textContent, bars: !!e.querySelector('svg.bc rect, svg.bc path') })));
   expect('work order: 2 labels, one per net: size + colour, barcode, code and date', wl.length === 2 && wl[0].net === '210x120 BLACK' && /^WOMQD001-01\/2\d{6}$/.test(wl[0].code) && wl[0].bars && (await p8.getAttribute('#print-area', 'class')) === 'lbl-S');
-  await p8.fill('#woPaste', '210x120 Grey 3, 205x90 BRW 4\nnonsense 5'); await p8.click('#woCheck');
-  expect('paste a list: 2 lines read, 1 left out', /Make 2 orders and print 7 labels/.test(await p8.textContent('#woPrev')) && /1 line cannot be read/.test(await p8.textContent('#woPrev')));
-  await p8.click('#woGo'); await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="S"]');
-  expect('the pasted list makes WOMQD002 and WOMQD003', !!(await S8()).wo.orders.WOMQD003 && (await S8()).wo.orders.WOMQD003.qty === 4);
+  // one order with many sizes (v14): paste a list, it becomes the lines of ONE order, for an FBA shipment
+  await p8.click('.wo-paste summary'); await p8.fill('#woPaste', '210x120 Grey 3, 205x90 BRW 4\nnonsense 5'); await p8.click('#woCheck');
+  expect('paste a list: 2 lines added to the order, 1 left out', /2 lines added/.test(await p8.textContent('#woPrev')) && /1 line cannot be read/.test(await p8.textContent('#woPrev')) && (await p8.$$('.wo-lines [data-wo-rm]')).length === 2);
+  expect('one order, all the labels', (await p8.textContent('#woMakeB')) === 'Make 1 order and print 7 labels');
+  await p8.selectOption('#woPur', 'FBA');
+  expect('FBA asks for the shipment ID', await p8.isVisible('#woRef'));
+  await p8.fill('#woRef', 'FBA15TEST'); await p8.fill('#woNote', 'Test shipment');
+  await p8.click('#woMakeB'); await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="S"]');
+  let w8 = await S8();
+  expect('the pasted list makes ONE order WOMQD002: 7 nets in 2 sizes, for FBA FBA15TEST', !w8.wo.orders.WOMQD003 && w8.wo.orders.WOMQD002.qty === 7 && w8.wo.orders.WOMQD002.lines.length === 2 && w8.wo.orders.WOMQD002.purpose === 'FBA' && w8.wo.orders.WOMQD002.ref === 'FBA15TEST' && w8.wo.orders.WOMQD002.note === 'Test shipment');
+  const wl2 = await p8.$$eval('#print-area .lbl-wo', (l) => l.map((e) => ({ net: e.querySelector('.wl-net').textContent, code: e.querySelector('.wl-code span').textContent })));
+  expect('each label shows its own size and colour, numbered over the whole order', wl2.length === 7 && wl2[0].net === '210x120 GREY' && wl2[0].code === 'WOMQD002-01/7' && wl2[3].net === '205x90 BROWN' && wl2[6].code === 'WOMQD002-07/7');
   await p8.evaluate(() => { location.hash = 'scan'; }); await p8.waitForSelector('#scanIn');
   const scan8 = async (c) => { await p8.fill('#scanIn', c); await p8.press('#scanIn', 'Enter'); await p8.waitForTimeout(60); return p8.textContent('#fb'); };
   const C1 = 'WOMQD001-01/2';
@@ -598,7 +606,7 @@ const STEPS = [
   expect('rack-in: the app shows the box for the net', box8 === 'CL-C4-R1' && /Scan the box label/.test(await p8.textContent('#fb')));
   expect('a wrong box is refused', /Wrong box/.test(await scan8('AL-C1-R1')) && (await S8()).wo.orders.WOMQD001.nets[1].st === 'wait');
   await scan8(box8);
-  let w8 = await S8();
+  w8 = await S8();
   expect('box scanned: the net is on the rack, stock +1 and the box +1 (like IN)', w8.wo.orders.WOMQD001.nets[1].st === 'racked' && w8.stock[WN] === 1 && w8.shelf[box8 + '|' + WN].qty === 1);
   expect('every person\'s step is kept on the net', w8.wo.orders.WOMQD001.nets[1].db.every((x) => x === 'EMP-06'));
   await p8.click('[data-undo]'); await p8.click('[data-why="Wrong box"]');
@@ -626,13 +634,38 @@ const STEPS = [
   await p8.evaluate(() => { location.hash = 'scan'; }); await p8.waitForSelector('#scanIn');
   expect('the old label stops working', /Old label/.test(await scan8(C2)));
   expect('the new label works', /Rejected/.test(await scan8(C2 + '-R2')));
-  await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew'); await p8.click('[data-wo-open="WOMQD003"]');
+  // after Packing: the FBA order's net is Ready (not in stock), then Shipped; a worker can send one to the top instead
+  const F1 = 'WOMQD002-01/7', F2 = 'WOMQD002-02/7', GN8 = 'DN-210x120-GR';
+  for (const c of [F1, F2]) for (let k = 0; k < 5; k++) { await scan8(c); await p8.click('[data-wo]'); await scan8(c); await p8.click('[data-wo]'); }
+  await scan8(F1);
+  expect('packed FBA net: the card says Ready for FBA with the shipment ID, a first-time line and an "i"', /Ready for FBA/.test(await p8.textContent('.wo-card .pa-go')) && (await p8.textContent('.wo-card .pa-loc')) === 'FBA15TEST' && /does not go into stock/.test(await p8.textContent('.wo-help')) && !!(await p8.$('.wo-help [data-tip="WOREADY"]')) && (await p8.textContent('[data-wo]')) === 'Ready for FBA FBA15TEST');
+  await p8.click('[data-wo]');
+  w8 = await S8();
+  expect('Ready: the net is kept apart for FBA, stock does not change', w8.wo.orders.WOMQD002.nets[1].st === 'ready' && w8.wo.orders.WOMQD002.nets[1].dest === 'FBA' && !(w8.stock[GN8] > 0) && w8.log.some((e) => e.type === 'WOSTEP' && e.act === 'READY' && e.dest === 'FBA'));
+  await scan8(F2); await p8.click('[data-wo-where]');
+  expect('going somewhere else: the worker picks from 5 places', (await p8.$$('[data-wo-dest]')).length === 5);
+  await p8.click('[data-wo-dest="Top"]'); await p8.click('[data-wo-box="TOP"]');
+  w8 = await S8();
+  expect('sent to the top instead: that net is in stock', w8.wo.orders.WOMQD002.nets[2].st === 'racked' && w8.stock[GN8] === 1);
+  await scan8(F1);
+  expect('a ready net: Shipped button with a first-time line and an "i"', (await p8.textContent('[data-wo]')) === 'Shipped' && !!(await p8.$('.wo-help [data-tip="WOSHIP"]')) && !!(await p8.$('[data-wo-move]')));
+  await p8.evaluate(() => { location.hash = 'dashboard'; }); await p8.waitForSelector('.wo-apart');
+  expect('dashboard: Packed, not in stock: Ready for FBA FBA15TEST, 1 net', /Ready for FBA FBA15TEST: 1 net/.test(await p8.textContent('.wo-apart')));
+  await p8.evaluate(() => { location.hash = 'scan'; }); await p8.waitForSelector('#scanIn');
+  await scan8(F1); await p8.click('[data-wo]');
+  w8 = await S8();
+  expect('Shipped: the net is closed, stock unchanged', w8.wo.orders.WOMQD002.nets[1].st === 'shipped' && w8.stock[GN8] === 1);
+  await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew'); await p8.click('[data-wo-open="WOMQD002"]');
+  expect('order: readiness per size (2 of 7 ready) and where it goes', /2 of 7 nets ready/.test(await p8.textContent('.wo-ready')) && (await p8.$$('.wo-per tbody tr')).length === 2 && /Goes to FBA FBA15TEST/.test(await p8.textContent('#woDetail')));
+  await p8.click('#woDestB'); await p8.fill('#woDR', 'FBA16NEW'); await p8.fill('#woDN', 'Moved to next truck'); await p8.click('#woDGo'); await p8.waitForSelector('#woDetail:not([hidden])');
+  w8 = await S8();
+  expect('manager changes where the order goes: new shipment ID and comment, sent to the sheet', w8.wo.orders.WOMQD002.ref === 'FBA16NEW' && w8.wo.orders.WOMQD002.note === 'Moved to next truck' && w8.log.some((e) => e.type === 'WODEST' && e.ref === 'FBA16NEW' && e.comment === 'Moved to next truck'));
   await p8.click('[data-wo-bulk="RECV"][data-k="0"]');
   w8 = await S8();
-  expect('manager: whole order received at Cutting in one tap', Object.values(w8.wo.orders.WOMQD003.nets).every((x) => x.st === 'recv'));
+  expect('manager: whole order received at Cutting in one tap', Object.values(w8.wo.orders.WOMQD002.nets).filter((x) => x.step === 0).every((x) => x.st === 'recv'));
   expect('work orders page fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await p8.evaluate(() => { location.hash = 'production'; }); await p8.waitForSelector('.wo-board');
-  expect('production page shows where nets pile up (7 at Cutting: 3 waiting, 4 in work)', /^7\s*Cutting\s*3 waiting · 4 in work/.test(await p8.textContent('.wo-col.pile')));
+  expect('production page shows where nets pile up (5 at Cutting, all in work)', /^5\s*Cutting\s*0 waiting · 5 in work/.test(await p8.textContent('.wo-col.pile')));
   expect('production page fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   // delete work orders (owner 23 Nov 2026, v13): see what is in them, a reason, racked nets off stock
   await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew'); await p8.click('[data-wo-f="all"]');

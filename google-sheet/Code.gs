@@ -38,7 +38,13 @@
 // Version 13 (23 Nov 2026): a manager or the owner deletes work orders: one, the ones ticked, or all (WODELETE, reason needed).
 //   The order, its nets (labels stop working) and, if chosen, its step history and the people's numbers for it go. Nets already
 //   racked in can come off stock and their box again (if chosen). Every deleted row is kept in the "WO deleted" tab first.
-var VERSION = 13;
+// Version 14 (23 Nov 2026): one work order can hold many sizes and colours (e.g. 16 for one FBA shipment). An order has a purpose
+//   (Rack, Top, FBA, Bulk buyer, Hold), a comment and an FBA shipment ID or buyer name. After Packing a net is packed, not stock.
+//   Its last scan follows where it goes: Rack or Top = scan the box and stock goes up (as before); FBA, Bulk or Hold = "Ready"
+//   (READY: kept apart, never in stock), then "Shipped" (SHIP) when it leaves. A manager can move ready nets to the racks
+//   (stock goes up then) and change where an order goes (WODEST). New columns: Work orders Purpose, Ref, Lines, Ready, Shipped;
+//   WO nets Dest, Ref. Old orders have no purpose: they go to the rack, as before.
+var VERSION = 14;
 var TOP_BOX = 25;          // a full box on top of the racks holds 25 nets
 var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes', 'Pick lists']; // what a snapshot copies and a reset or restore replaces
 var KEEP_DAYS = 30;          // daily snapshots kept this long
@@ -48,7 +54,7 @@ var LOCK_MIN = 15;          // first lock; doubles with every further lock, up t
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, IN, OUT, pick, refill,
 // empty, swap, returns, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { WODELETE: 'Manager', WOBULK: 'Manager', WOSET: 'Manager', WODUE: 'Manager', WORIGHT: 'Manager', BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
+var NEEDS = { WODEST: 'Manager', WODELETE: 'Manager', WOBULK: 'Manager', WOSET: 'Manager', WODUE: 'Manager', WORIGHT: 'Manager', BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -62,9 +68,9 @@ var TABS = {
   'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID', 'Part boxes'],
   'Pick lists': ['List', 'Net ID', 'Net', 'Qty', 'Picked', 'Created', 'By', 'State', 'Updated', 'No', 'Stock', 'Note', 'Done by', 'Done at', 'From'],
   Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row'],
-  'Work orders': ['Order', 'Net ID', 'Net', 'Qty', 'Created', 'By', 'Due', 'State', 'Finished', 'Racked', 'Rejected', 'Note', 'Request'],
-  'WO nets': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
-  'WO nets done': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
+  'Work orders': ['Order', 'Net ID', 'Net', 'Qty', 'Created', 'By', 'Due', 'State', 'Finished', 'Racked', 'Rejected', 'Note', 'Request', 'Purpose', 'Ref', 'Lines', 'Ready', 'Shipped'],
+  'WO nets': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note', 'Dest', 'Ref'],
+  'WO nets done': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note', 'Dest', 'Ref'],
   Production: ['Event ID', 'Time', 'Worker ID', 'Worker', 'Order', 'Net code', 'Net', 'Step', 'Action', 'Minutes', 'Box', 'Reason', 'Caused by', 'Entered by', 'Station', 'Before', 'After', 'Undone'],
   'WO deleted': ['Deleted at', 'By', 'Reason', 'Tab', 'Row'],
   'Production daily': ['Day', 'Worker ID', 'Worker', 'Step', 'Received', 'Done', 'Minutes', 'Timed', 'Rejects caused', 'Rework caused', 'First', 'Last']
@@ -351,7 +357,7 @@ function allowed_(me, ev, mine) {
 // After a reset, scans made before it (a phone that was offline, or an undo of an old scan) must not bring old numbers back.
 function beforeReset_(ev, when, resetAt) {
   if (!resetAt || ev.type === 'WORKER') return null;
-  if (/^WO/.test(ev.type) && !(ev.type === 'WOSTEP' && ev.act === 'RACKIN')) return null; // production steps do not change stock; only a rack-in does
+  if (/^WO/.test(ev.type) && !((ev.type === 'WOSTEP' || ev.type === 'WOBULK') && ev.act === 'RACKIN')) return null; // production steps do not change stock; only a rack-in does
   if (ev.t && new Date(ev.t).getTime() < resetAt) return 'This scan was made before the inventory was reset, so it was not saved.';
   if (ev.type === 'UNDO' && ev.undoes && when[ev.undoes] != null && when[ev.undoes] < resetAt) return 'That scan was before the reset, so it cannot be undone.';
   return null;
@@ -694,13 +700,16 @@ function restore_(ev, t) {
 }
 
 // ---------- work orders: door nets (version 12) ----------
-// One work order = one size + one colour, 1 to 1000 nets. Every net has its own label: WOMQD045-07/20 = door order 45, net 7 of 20.
+// One work order = one or many sizes and colours (lines), 1 to 1000 nets in all. Every net has its own label: WOMQD045-07/20 =
+// door order 45, net 7 of 20 (counted over the whole order; each label shows its own size and colour).
 // A reprinted label gets "-R2", "-R3" ...; the older label then stops working. Each net goes through the steps below. At Cutting to
 // Packing a worker scans Received, then Done. Rack-in: scan the net, then the box; the net is added to stock like IN.
 // Every scan is a row in Production (never deleted) and adds up in Production daily (per person, per step, per day).
 var WO_STEPS = ['Cutting', 'Stitch base', 'Stitch sides', 'Final finishing', 'Packing', 'Rack-in'];
 var WO_RACK = 5;          // step number of Rack-in; a racked net has step 6
 var WO_MAX = 1000;        // nets in one order
+var WO_PURPOSE = ['Rack', 'Top', 'FBA', 'Bulk', 'Hold']; // where the order's nets go after Packing. FBA, Bulk, Hold: never in stock
+var WO_APART = { FBA: 1, Bulk: 1, Hold: 1 };
 var WO_KEEP_DAYS = 14;    // a finished order's net rows move to "WO nets done" after this many days (Production keeps everything)
 var WO_ = null;           // this request's copy of the work order tabs, written back once at the end (fast for 1000 nets)
 var WO_N = TABS['WO nets'].length, WO_O = TABS['Work orders'].length, WO_P = TABS.Production.length, WO_D = TABS['Production daily'].length;
@@ -756,16 +765,21 @@ function rightsSet_(id, on) {
   var ids = rights_().filter(function (x) { return x !== id; }); if (on) ids.push(id);
   PropertiesService.getScriptProperties().setProperty('LABEL_RIGHTS', JSON.stringify({ day: day_(new Date()), ids: ids }));
 }
-// net row: 0 Code, 1 Order, 2 No, 3 Net ID, 4 Step, 5 Status (wait / recv / rejected / racked), 6 Last by, 7 Last at, 8 Box, 9 Label,
-//   10 Received at, 11 Reworks, 12-16 who did Cutting ... Packing, 17 Note (why rejected or sent back)
+// net row: 0 Code, 1 Order, 2 No, 3 Net ID, 4 Step, 5 Status (wait / recv / rejected / racked / ready / shipped), 6 Last by, 7 Last at,
+//   8 Box, 9 Label, 10 Received at, 11 Reworks, 12-16 who did Cutting ... Packing, 17 Note (why rejected or sent back),
+//   18 Dest (Rack, Top, FBA, Bulk, Hold: where it went after Packing), 19 Ref (FBA shipment ID or buyer)
 function woState_(r) { return [Number(r[4]) || 0, String(r[5] || 'wait')]; }
 function woSay_(r) { // where the net is, in plain words
   var s = Number(r[4]) || 0, st = String(r[5] || 'wait'), who = r[6] ? workerName_(r[6]) : '';
   if (st === 'racked') return 'already on the rack' + (r[8] ? ' in ' + r[8] : '');
+  if (st === 'ready') return 'ready for ' + woDestWord_(r[18], r[19]) + ', not in stock';
+  if (st === 'shipped') return 'already shipped (' + woDestWord_(r[18], r[19]) + ')';
   if (st === 'rejected') return 'rejected' + (r[17] ? ' (' + r[17] + ')' : '');
   if (st === 'recv') return 'already received at ' + WO_STEPS[s] + (who ? ' by ' + who : '');
   return 'waiting for ' + (s === WO_RACK ? 'Rack-in' : WO_STEPS[s]) + (who && s ? ' (last step by ' + who + ')' : '');
 }
+function woDestWord_(d, ref) { d = String(d || ''); ref = String(ref || ''); return (d === 'FBA' ? 'FBA' : d === 'Bulk' ? 'bulk buyer' : d === 'Hold' ? 'hold' : d === 'Top' ? 'top of the racks' : 'the rack') + (ref ? ' ' + ref : ''); }
+function woPurpose_(o) { var p = String(o[13] || ''); return WO_PURPOSE.indexOf(p) >= 0 ? p : 'Rack'; } // old orders: the rack
 function prodRow_(ev, t, who, r, step, action, extra) {
   var x = extra || {};
   return [x.id || ev.id, t, who, workerName_(who), r[1], r[0], r[3], step == null ? '' : (WO_STEPS[step] || 'On rack'), action, x.min == null ? '' : x.min, x.box || '', ev.reason || '',
@@ -795,12 +809,12 @@ function prodDaily_(test) {
 }
 function woSet_(i, row) { WO_.r[i] = row; WO_.dirty[i] = 1; }
 function woOrderUpdate_(order, t) { woLoad_().oupd[order] = t; } // counted once, when the changes are written
-function woOrderCount_(order, t) { // racked / rejected counts; the order is done when every net is on the rack or rejected
+function woOrderCount_(order, t) { // racked / rejected / ready / shipped counts; the order is done when no net is left in production
   var W = WO_, oi = W.oidx[order]; if (oi == null) return;
-  var o = W.o[oi], racked = 0, rej = 0, all = (W.byOrder[order] || []).length;
-  (W.byOrder[order] || []).forEach(function (i) { var st = String(W.r[i][5]); if (st === 'racked') racked++; else if (st === 'rejected') rej++; });
-  var done = all > 0 && racked + rej === all;
-  o[9] = racked; o[10] = rej;
+  var o = W.o[oi], racked = 0, rej = 0, ready = 0, ship = 0, all = (W.byOrder[order] || []).length;
+  (W.byOrder[order] || []).forEach(function (i) { var st = String(W.r[i][5]); if (st === 'racked') racked++; else if (st === 'rejected') rej++; else if (st === 'ready') ready++; else if (st === 'shipped') ship++; });
+  var done = all > 0 && racked + rej + ready + ship === all;
+  o[9] = racked; o[10] = rej; o[16] = ready; o[17] = ship;
   if (done && o[7] !== 'done') { o[7] = 'done'; o[8] = t; } else if (!done && o[7] === 'done') { o[7] = 'open'; o[8] = ''; }
   W.odirty[oi] = 1;
 }
@@ -815,11 +829,24 @@ function woOne_(ev, t, i, who, act, extra) {
     if (r[10]) min = Math.round((t.getTime() - new Date(r[10]).getTime()) / 6000) / 10;
     if (min != null && (min < 0 || min > 24 * 60)) min = null; // a time over a day is not a working time: not counted in the average
     r[12 + s] = who; r[4] = s + 1; r[5] = 'wait'; r[10] = ''; action = 'Done';
-  } else if (act === 'RACKIN') {
-    if (st !== 'wait' || s !== WO_RACK) return r[0] + ' is ' + woSay_(r) + '.';
+  } else if (act === 'RACKIN') { // packed net into its box (or a ready net moved to the racks by a manager): stock goes up
+    var moved = st === 'ready';
+    if (moved && !x.mgr) return r[0] + ' is ' + woSay_(r) + '. Only a manager can move it to the racks.';
+    if (!moved && (st !== 'wait' || s !== WO_RACK)) return r[0] + ' is ' + woSay_(r) + '.';
     box = String(ev.loc || '').toUpperCase(); if (box === '2F') box = 'TOP';
     if (!box) return 'Scan the box the net goes into.';
-    r[4] = 6; r[5] = 'racked'; r[8] = box; action = 'Rack-in';
+    r[4] = 6; r[5] = 'racked'; r[8] = box; r[18] = box === 'TOP' ? 'Top' : 'Rack'; action = moved ? 'Move to rack' : 'Rack-in';
+  } else if (act === 'READY') { // packed, kept apart for FBA, a bulk buyer or on hold: not stock
+    var dst = String(ev.dest || ''), restage = st === 'ready';
+    if (!WO_APART[dst]) return 'Pick where the net goes.';
+    if (restage && !x.mgr) return r[0] + ' is ' + woSay_(r) + '.';
+    if (!restage && (st !== 'wait' || s !== WO_RACK)) return r[0] + ' is ' + woSay_(r) + '.';
+    var oo = W.o[W.oidx[r[1]]] || [];
+    r[4] = 6; r[5] = 'ready'; r[18] = dst; r[19] = String(ev.ref != null ? ev.ref : (woPurpose_(oo) === dst ? oo[14] || '' : '')).slice(0, 60);
+    action = restage ? 'Ready: changed' : 'Ready';
+  } else if (act === 'SHIP') {
+    if (st !== 'ready') return r[0] + ' is ' + woSay_(r) + '.';
+    r[5] = 'shipped'; action = 'Shipped';
   } else if (act === 'REJECT') {
     if (st !== 'wait' && st !== 'recv') return r[0] + ' is ' + woSay_(r) + '.';
     if (!ev.reason) return 'Say why the net is rejected.';
@@ -837,7 +864,7 @@ function woOne_(ev, t, i, who, act, extra) {
   W.prod.push(prodRow_(ev, t, who, r, step, action, { id: x.id, min: min, box: box, caused: caused, station: x.station, before: before, after: woState_(r) }));
   if (act === 'RECV') daily_(t, who, s, 4, 1);
   if (act === 'DONE') daily_(t, who, s, 5, 1, min);
-  if (act === 'RACKIN') daily_(t, who, WO_RACK, 5, 1);
+  if (action === 'Rack-in' || action === 'Ready') daily_(t, who, WO_RACK, 5, 1); // the last step after Packing counts once per net
   if (caused) daily_(t, caused, act === 'BACK' ? Math.round(Number(ev.to)) : s - 1, act === 'BACK' ? 9 : 8, 1);
   if (act === 'RACKIN') { // into stock, the same way as IN: the total and the box number go up
     stock_(r[3], '', 1, 'add', 'Rack-in ' + r[0], t);
@@ -857,22 +884,41 @@ function woApply_(ev, me, station) {
     if (c.label < (Number(W.r[i][9]) || 1)) return 'Old label ' + ev.code + ': it was printed again, use the new label.';
     var cur = woState_(W.r[i]);
     if (ev.from && (Number(ev.from[0]) !== cur[0] || String(ev.from[1]) !== cur[1])) return W.r[i][0] + ' is ' + woSay_(W.r[i]) + '.';
-    return woOne_(ev, t, i, me.id, ev.act, { station: station });
+    return woOne_(ev, t, i, me.id, ev.act, { station: station, mgr: atLeast_(me.level, 'Manager') });
   }
   if (ev.type === 'WOBULK') { // a manager does a whole order (or the nets ticked) at once, for the person who did the work
     var list = (W.byOrder[ev.order] || []).slice(), want = ev.nos ? {} : null, n = 0, who = ev['for'] ? String(ev['for']) : me.id, s0 = Number(ev.step);
     if (!list.length) return 'Work order ' + ev.order + ' not found.';
     if (ev['for'] && !findRow_('Workers', badge_(who))) return 'Unknown employee number ' + who + '.';
     who = badge_(who);
-    if (ev.act !== 'RECV' && ev.act !== 'DONE') return 'Only Received or Done can be done for a whole order.';
+    // Received / Done at a step; Ready (packed nets kept apart for FBA, bulk or hold); Shipped (ready nets);
+    // Rack-in only of ready nets and only onto the top of the racks (a packed net goes into its box one by one)
+    var from = { RECV: 'wait', DONE: 'recv', READY: 'wait', SHIP: 'ready', RACKIN: 'ready' }[ev.act];
+    if (!from) return 'Only Received, Done, Ready, Shipped or Move to the top can be done for a whole order.';
+    if (ev.act === 'READY' && !WO_APART[String(ev.dest || '')]) return 'Pick where the nets go.';
+    if (ev.act === 'RACKIN' && String(ev.loc || '').toUpperCase() !== 'TOP') return 'A whole order can only be moved onto the top of the racks.';
+    if (ev.act === 'READY' || ev.act === 'SHIP' || ev.act === 'RACKIN') s0 = ev.act === 'READY' ? WO_RACK : 6;
     if (want) ev.nos.forEach(function (k) { want[Number(k)] = 1; });
     list.forEach(function (j) {
       var r = W.r[j], st = woState_(r);
       if (want && !want[Number(r[2])]) return;
-      if (st[0] !== s0 || st[1] !== (ev.act === 'RECV' ? 'wait' : 'recv')) return;
-      if (!woOne_(ev, t, j, who, ev.act, { id: ev.id + '#' + (++n), station: station })) return;
+      if (st[0] !== s0 || st[1] !== from) return;
+      woOne_(ev, t, j, who, ev.act, { id: ev.id + '#' + (++n), station: station, mgr: true });
     });
     if (!n) return 'No net of ' + ev.order + ' is waiting for that step.';
+    return null;
+  }
+  if (ev.type === 'WODEST') { // a manager changes where an order goes (purpose, FBA shipment ID or buyer, comment)
+    var di = W.oidx[ev.order]; if (di == null) return 'Work order ' + ev.order + ' not found.';
+    var pp = String(ev.purpose || ''); if (WO_PURPOSE.indexOf(pp) < 0) return 'Pick where the order goes.';
+    var od = W.o[di], was = woPurpose_(od) + (od[14] ? ' ' + od[14] : '');
+    od[13] = pp; od[14] = String(ev.ref || '').slice(0, 60); if (ev.comment != null) od[11] = String(ev.comment).slice(0, 200); W.odirty[di] = 1;
+    var moved2 = 0;
+    if (WO_APART[pp]) (W.byOrder[ev.order] || []).forEach(function (j) { // nets already kept apart follow the order
+      var r = W.r[j]; if (String(r[5]) !== 'ready' || (String(r[18]) === pp && String(r[19]) === od[14])) return;
+      var nr = r.slice(); nr[18] = pp; nr[19] = od[14]; woSet_(j, nr); moved2++;
+    });
+    W.prod.push([ev.id, t, me.id, workerName_(me.id), ev.order, '', od[1], '', 'Goes to: ' + was + ' -> ' + pp + (od[14] ? ' ' + od[14] : '') + (moved2 ? ' (' + moved2 + ' ready nets)' : ''), '', '', ev.reason || '', '', me.id, station, '', '', '']);
     return null;
   }
   if (ev.type === 'WOSET') { // a manager puts nets at a step (move back, fix a wrong scan, bring a rejected net back)
@@ -934,9 +980,9 @@ function woUndo_(ev, me, t, station) {
     if (j != null && x[15]) { var r = W.r[j].slice(0, 4).concat(JSON.parse(x[15])); while (r.length < WO_N) r.push(''); woSet_(j, r); woOrderUpdate_(r[1], t); }
     if (x[8] === 'Received') daily_(when, String(x[2]), step, 4, -1);
     if (x[8] === 'Done') daily_(when, String(x[2]), step, 5, -1, x[9] === '' ? null : Number(x[9]));
-    if (x[8] === 'Rack-in') daily_(when, String(x[2]), WO_RACK, 5, -1);
+    if (x[8] === 'Rack-in' || x[8] === 'Ready') daily_(when, String(x[2]), WO_RACK, 5, -1);
     if (x[12]) daily_(when, String(x[12]), x[8] === 'Rework' ? JSON.parse(x[16])[0] : step - 1, x[8] === 'Rework' ? 9 : 8, -1);
-    if (x[8] === 'Rack-in') {
+    if (x[8] === 'Rack-in' || x[8] === 'Move to rack') {
       stock_(String(x[6]), '', -1, 'add', 'Undo rack-in ' + x[5], t);
       takeOff_(String(x[10]), String(x[6]), 1, t, me.id, ev.id);
       var sr = findRow_('Scans', x[0]); if (sr && String(sr.values[11]).indexOf(' · UNDONE') < 0) sheet_('Scans').getRange(sr.row, 12).setValue(String(sr.values[11]) + ' · UNDONE');
@@ -980,7 +1026,7 @@ function woDelete_(ev, me, t, station) {
     var when = new Date(x[1]), step = WO_STEPS.indexOf(String(x[7]));
     if (x[8] === 'Received') daily_(when, String(x[2]), step, 4, -1);
     if (x[8] === 'Done') daily_(when, String(x[2]), step, 5, -1, x[9] === '' ? null : Number(x[9]));
-    if (x[8] === 'Rack-in') daily_(when, String(x[2]), WO_RACK, 5, -1);
+    if (x[8] === 'Rack-in' || x[8] === 'Ready') daily_(when, String(x[2]), WO_RACK, 5, -1);
     if (x[12]) { var aft = []; try { aft = JSON.parse(x[16]); } catch (e) {} daily_(when, String(x[12]), x[8] === 'Rework' ? aft[0] : step - 1, x[8] === 'Rework' ? 9 : 8, -1); }
   });
   if (W.daily) writeRows_('Production daily', W.daily.rows, W.ddirty, WO_D);
@@ -1007,6 +1053,7 @@ function rewrite_(name, rows, width) { // replace every row under the titles
   if (rows.length) { ensureRows_(sh, rows.length + 1); sh.getRange(2, 1, rows.length, width).setValues(rows.map(function (r) { var o = r.slice(0, width); while (o.length < width) o.push(''); return o; })); }
 }
 // make orders (manager, or label printing today). Each order gets the next number; one row per net, all written at once.
+// An order is { lines: [{ net, qty }], purpose, ref, note, due } (version 14), or one line { net, qty } as before.
 function woCreate_(me, body) {
   if (!canLabels_(me)) return { ok: false, error: 'Only a manager, or someone the manager gave label printing today, can make work orders.' };
   var W = woLoad_(), req = String(body.req || ''), t = new Date(), list = body.orders || [], out = [];
@@ -1015,29 +1062,50 @@ function woCreate_(me, body) {
     if (out.length) return { ok: true, v: VERSION, orders: out, again: true };
   }
   if (!list.length || list.length > 100) return { ok: false, error: 'Make 1 to 100 orders at a time.' };
+  var orders = [];
   for (var i = 0; i < list.length; i++) {
-    var o = list[i], q = Math.round(Number(o.qty));
-    if (!/^DN-\d{3}x\d{2,3}-(BK|BR|GR)$/.test(String(o.net || ''))) return { ok: false, error: 'Line ' + (i + 1) + ': not a door net.' };
-    if (!(q >= 1 && q <= WO_MAX)) return { ok: false, error: 'Line ' + (i + 1) + ': an order has 1 to ' + WO_MAX + ' nets.' };
+    var o = list[i], ls = o.lines && o.lines.length ? o.lines : [{ net: o.net, qty: o.qty, netName: o.netName }], tot = 0, merged = {}, keys = [];
+    if (ls.length > 100) return { ok: false, error: 'Order ' + (i + 1) + ': 1 to 100 sizes and colours in one order.' };
+    for (var j = 0; j < ls.length; j++) {
+      var q = Math.round(Number(ls[j].qty)), id = String(ls[j].net || ''), at = ls.length > 1 ? 'Line ' + (j + 1) : 'Line ' + (i + 1);
+      if (!/^DN-\d{3}x\d{2,3}-(BK|BR|GR)$/.test(id)) return { ok: false, error: at + ': not a door net.' };
+      if (!(q >= 1 && q <= WO_MAX)) return { ok: false, error: at + ': 1 to ' + WO_MAX + ' nets.' };
+      if (!merged[id]) { merged[id] = { net: id, qty: 0, netName: ls[j].netName || '' }; keys.push(id); }
+      merged[id].qty += q; tot += q;
+    }
+    if (tot > WO_MAX) return { ok: false, error: 'Order ' + (i + 1) + ': ' + tot + ' nets. One order has up to ' + WO_MAX + ' nets: split it.' };
+    var pur = String(o.purpose || 'Rack'); if (WO_PURPOSE.indexOf(pur) < 0) pur = 'Rack';
+    orders.push({ lines: keys.map(function (k) { return merged[k]; }), qty: tot, purpose: pur, ref: String(o.ref || '').slice(0, 60), note: String(o.note || '').slice(0, 200), due: o.due });
   }
   var pr = PropertiesService.getScriptProperties(), no = Number(pr.getProperty('WO_SEQ_MQD')) || 0;
   W.o.forEach(function (o) { var m = /^WOMQD(\d+)$/.exec(String(o[0])); if (m) no = Math.max(no, Number(m[1])); });
-  list.forEach(function (o) {
-    var q = Math.round(Number(o.qty)), code = woCode_(++no), due = o.due ? new Date(o.due) : '';
-    var row = [code, o.net, o.netName || '', q, t, workerName_(me.id), due && !isNaN(due.getTime()) ? due : '', 'open', '', 0, 0, String(o.note || '').slice(0, 100), req];
+  orders.forEach(function (o) {
+    var q = o.qty, code = woCode_(++no), due = o.due ? new Date(o.due) : '', one = o.lines.length === 1;
+    var row = [code, one ? o.lines[0].net : 'MIX', one ? o.lines[0].netName : o.lines.length + ' sizes', q, t, workerName_(me.id), due && !isNaN(due.getTime()) ? due : '', 'open', '', 0, 0, o.note, req,
+      o.purpose, o.ref, o.lines.map(function (l) { return l.net + ':' + l.qty; }).join(','), 0, 0];
     W.oidx[code] = W.o.length; W.odirty[W.o.length] = 1; W.o.push(row);
     W.byOrder[code] = [];
-    for (var k = 1; k <= q; k++) {
-      var nr = [woNetCode_(code, k, q), code, k, o.net, 0, 'wait', '', '', '', 1, '', 0, '', '', '', '', '', ''];
-      W.idx[nr[0]] = W.r.length; W.byOrder[code].push(W.r.length); W.dirty[W.r.length] = 1; W.r.push(nr);
-    }
-    W.prod.push([body.req ? req + '-' + code : 'MK-' + code, t, me.id, workerName_(me.id), code, '', o.net, '', 'Order made: ' + q + ' nets, labels printed', '', '', '', '', me.id, body.station || '', '', '', '']);
+    var k = 0;
+    o.lines.forEach(function (l) {
+      for (var c = 0; c < l.qty; c++) {
+        k++;
+        var nr = [woNetCode_(code, k, q), code, k, l.net, 0, 'wait', '', '', '', 1, '', 0, '', '', '', '', '', '', '', ''];
+        W.idx[nr[0]] = W.r.length; W.byOrder[code].push(W.r.length); W.dirty[W.r.length] = 1; W.r.push(nr);
+      }
+    });
+    W.prod.push([body.req ? req + '-' + code : 'MK-' + code, t, me.id, workerName_(me.id), code, '', row[1], '', 'Order made: ' + q + ' nets' + (one ? '' : ' in ' + o.lines.length + ' sizes') + ', labels printed' + (o.purpose !== 'Rack' ? ' · for ' + o.purpose + (o.ref ? ' ' + o.ref : '') : ''), '', '', '', '', me.id, body.station || '', '', '', '']);
     out.push(woOrderOut_(row));
   });
   pr.setProperty('WO_SEQ_MQD', String(no));
   return { ok: true, v: VERSION, orders: out };
 }
-function woOrderOut_(o) { return { id: String(o[0]), net: String(o[1]), qty: Number(o[3]) || 0, created: iso_(o[4]), by: String(o[5] || ''), due: iso_(o[6]), state: String(o[7] || 'open'), finished: iso_(o[8]), racked: Number(o[9]) || 0, rejected: Number(o[10]) || 0, note: String(o[11] || '') }; }
+function woLines_(o) { // [{ net, qty }] of an order: the Lines column, or the one net of an older order
+  var s = String(o[15] || '');
+  if (!s) return o[1] && o[1] !== 'MIX' ? [{ net: String(o[1]), qty: Number(o[3]) || 0 }] : [];
+  return s.split(',').map(function (p) { var a = p.split(':'); return { net: a[0], qty: Number(a[1]) || 0 }; });
+}
+function woOrderOut_(o) { return { id: String(o[0]), net: String(o[1]), qty: Number(o[3]) || 0, created: iso_(o[4]), by: String(o[5] || ''), due: iso_(o[6]), state: String(o[7] || 'open'), finished: iso_(o[8]), racked: Number(o[9]) || 0, rejected: Number(o[10]) || 0, note: String(o[11] || ''),
+  purpose: woPurpose_(o), ref: String(o[14] || ''), lines: woLines_(o), ready: Number(o[16]) || 0, shipped: Number(o[17]) || 0 }; }
 // what the phones get: open orders with every net (where it is, who has it), and orders finished in the last 30 days.
 // Managers also get the last 35 days of production numbers. Workers never get the numbers per person.
 function woRead_(me) {
@@ -1045,11 +1113,12 @@ function woRead_(me) {
   W.o.forEach(function (o) {
     if (!o[0]) return;
     var fin = o[8] ? new Date(o[8]).getTime() : 0;
-    if (String(o[7]) === 'done' && now - fin > 30 * 864e5) return;
+    var apart = Number(o[16]) > 0; // nets kept apart for FBA, bulk or hold: shown until they are shipped
+    if (String(o[7]) === 'done' && now - fin > 30 * 864e5 && !apart) return;
     var x = woOrderOut_(o);
-    if (String(o[7]) !== 'done' || now - fin < 3 * 864e5) x.nets = (W.byOrder[o[0]] || []).map(function (i) {
-      var r = W.r[i]; // [no, step, status, last by, last at, box, label, reworks, done by Cutting ... Packing, note]
-      return [Number(r[2]), Number(r[4]) || 0, String(r[5] || 'wait'), String(r[6] || ''), iso_(r[7]), String(r[8] || ''), Number(r[9]) || 1, Number(r[11]) || 0, [r[12], r[13], r[14], r[15], r[16]].map(String), String(r[17] || '')];
+    if (String(o[7]) !== 'done' || now - fin < 3 * 864e5 || apart) x.nets = (W.byOrder[o[0]] || []).map(function (i) {
+      var r = W.r[i]; // [no, step, status, last by, last at, box, label, reworks, done by Cutting ... Packing, note, net, dest, ref]
+      return [Number(r[2]), Number(r[4]) || 0, String(r[5] || 'wait'), String(r[6] || ''), iso_(r[7]), String(r[8] || ''), Number(r[9]) || 1, Number(r[11]) || 0, [r[12], r[13], r[14], r[15], r[16]].map(String), String(r[17] || ''), String(r[3] || ''), String(r[18] || ''), String(r[19] || '')];
     });
     out.push(x);
   });
@@ -1059,7 +1128,7 @@ function woRead_(me) {
 // every night: the net rows of orders finished more than 14 days ago move to "WO nets done" (Production keeps every scan)
 function woArchive_(t) {
   var W = woLoad_(), old = {}, keep = [], move = [];
-  W.o.forEach(function (o) { if (String(o[7]) === 'done' && o[8] && t.getTime() - new Date(o[8]).getTime() > WO_KEEP_DAYS * 864e5) old[o[0]] = 1; });
+  W.o.forEach(function (o) { if (String(o[7]) === 'done' && !(Number(o[16]) > 0) && o[8] && t.getTime() - new Date(o[8]).getTime() > WO_KEEP_DAYS * 864e5) old[o[0]] = 1; });
   if (!Object.keys(old).length) { WO_ = null; return; }
   W.r.forEach(function (r) { if (!r[0]) return; (old[r[1]] ? move : keep).push(r); });
   WO_ = null;
