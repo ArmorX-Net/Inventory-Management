@@ -155,7 +155,7 @@ window.HELP_QA = [
   { t: 'Printing', q: 'Where do I print labels and signs?', k: 'print labels setup shelf badge command sheet side sign rack layout thermal',
     a: '<b>Setup labels</b> page: worker badges, the command sheet (with the TOP label), side signs (big or small), the rack layout sheet and shelf labels. Shelf labels show the size and color of the net in big letters with the box code small underneath: stick one on the shelf and one on the front of the box. Batch labels print from <b>Batches &amp; labels</b>. Everything prints solid black.' },
   { t: 'Printing', q: 'Small or Large label?', k: 'label size small large 50 25 4x6 101.6 152.4 thermal tiny header footer date address print',
-    a: 'Every label print asks which labels are in the thermal printer: <b>Small</b> 50 x 25 mm or <b>Large</b> 101.6 x 152.4 mm (4 x 6 inch). Pick the one in the printer and the label fills it, one label per page. In the print window: the same paper size, margins <b>None</b>, scale 100, and untick <b>Headers and footers</b> (that is what prints the date and web address on the label). A tiny label in the middle of a big one means Small was picked with the large roll in the printer.' },
+    a: 'Every label print asks which labels are in the thermal printer: <b>Small</b> 50 x 25 mm or <b>Large</b> 4 x 6 inch, printed landscape (152.4 x 101.6 mm). Pick the one in the printer and the label fills it, one label per page. In the print window: the same paper size (Large: 4 x 6 in, landscape), margins <b>None</b>, scale 100, and untick <b>Headers and footers</b> (that is what prints the date and web address on the label). A tiny label in the middle of a big one means Small was picked with the large roll in the printer.' },
   { t: 'Printing', q: 'How do I print this cheat sheet?', k: 'cheat sheet print handbook guide pdf',
     a: 'On this Help page tap <b>Print cheat sheet</b> (one A4 page). To keep a PDF, choose "Save as PDF" in the print window.' },
 
@@ -234,6 +234,18 @@ window.HELP_SHEET = [
 // The small "i" next to an action (owner 22 Nov 2026): three short lines for the floor. a = what it does, b = what you type, c = what changes.
 // Keep these short; when a screen's words change, change them here too.
 window.HELP_TIPS = {
+  WORECV: { h: 'Received', more: 'How do I scan a net at my step?', lines: [
+    ['When', 'The net has come to you and you start your step on it.'],
+    ['What you do', 'Scan the label, tap <b>Received</b>. When you finish, scan it again and tap <b>Done</b>.'],
+    ['What changes', 'The app knows the net is with you. Nothing changes in stock.']] },
+  WODONE: { h: 'Done', more: 'How do I scan a net at my step?', lines: [
+    ['When', 'You have finished your step on this net.'],
+    ['What you do', 'Scan the label, tap <b>Done</b>, then pass the net on to the next step.'],
+    ['What changes', 'The net waits for the next step. Tapped by mistake? Undo it within 15 minutes.']] },
+  WORACK: { h: 'Rack-in', more: 'How do I put a finished net on the rack (Rack-in)?', lines: [
+    ['When', 'The net is packed and goes into its box on the rack.'],
+    ['What you do', 'Put it in the box the app shows, then scan that box label (or tap the button).'],
+    ['What changes', 'Stock goes up by 1 and that box\'s number goes up by 1.']] },
   IN: { h: 'IN · put nets in', more: 'How do I put nets in a box', lines: [
     ['What it does', 'You put nets in a box on the rack, or on top of the rack.'],
     ['What you type', 'The size, then tap the color. The app shows the box. Tap how many you put in.'],

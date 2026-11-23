@@ -138,6 +138,7 @@ tr:last-child td{border-bottom:none}
   .top,main,.toast,body::before{display:none!important}
   #print-area{display:block}
   #print-area .lbl{border:none;border-radius:0;page-break-after:always;break-after:page}
+  #print-area .lbl:last-child{page-break-after:auto;break-after:auto} /* no blank label at the end (WOMQD004: 9 nets printed 10) */
 }
 @media (prefers-reduced-motion:no-preference){.feedback{transition:background .2s}}
 
@@ -487,30 +488,30 @@ tr.odd td{background:var(--soft-warn)}
 /* pick list on a phone: the table scrolls inside its card, never the page */
 @media screen{#pOut .sheet{overflow-x:auto}}
 @media screen and (max-width:480px){#pOut .sheet th,#pOut .sheet td{padding:4px 3px;font-size:.85rem}}
-/* LABEL SIZES (owner 23 Nov 2026): every label print asks Small (50 x 25 mm) or Large (101.6 x 152.4 mm, 4 x 6 in, upright).
+/* LABEL SIZES (owner 23 Nov 2026): every label print asks Small (50 x 25 mm) or Large (152.4 x 101.6 mm, 4 x 6 in, always landscape).
    The label fills that exact page, one label per page, solid black. The page size and margins come from printNow() in app.js. */
 .lbl-ask h3{margin:0}
 .lbl-ask-b{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .lbl-ask-b .btn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:14px 8px;min-height:72px;font-size:1.1rem}
 .lbl-ask-b .btn span{font-size:.85rem;font-weight:400}
 @media print{
-  #print-area.lbl-L .lbl{width:101.6mm !important;height:152mm !important;box-sizing:border-box;padding:6mm 5mm;justify-content:center;gap:5mm;overflow:hidden}
+  #print-area.lbl-L .lbl{width:152.4mm !important;height:101.2mm !important;box-sizing:border-box;padding:5mm 6mm;justify-content:center;align-items:center;gap:4mm;overflow:hidden}
   #print-area.lbl-L .lbl .mono,#print-area.lbl-L .lbl-loc .sub,#print-area.lbl-L .lbl-batch .t{font-size:15pt !important}
-  #print-area.lbl-L .lbl-loc .ll-net{flex-direction:column;align-items:center;gap:3mm;white-space:normal}
-  #print-area.lbl-L .lbl-loc .ll-size{font-size:70pt}
-  #print-area.lbl-L .lbl-loc .ll-col{font-size:44pt}
+  #print-area.lbl-L .lbl-loc .ll-net{flex-direction:row;align-items:baseline;justify-content:center;gap:6mm;white-space:nowrap}
+  #print-area.lbl-L .lbl-loc .ll-size{font-size:64pt}
+  #print-area.lbl-L .lbl-loc .ll-col{font-size:40pt}
   #print-area.lbl-L .lbl-loc .ll-code{font-size:24pt;gap:6mm}
   #print-area.lbl-L .lbl-loc .ll-code .role{border-width:.6mm;padding:0 2mm}
   #print-area.lbl-L .lbl-batch .t{gap:6mm}
-  #print-area.lbl-L .lbl-batch .t b,#print-area.lbl-L .lbl-batch .made{font-size:20pt}
-  #print-area.lbl-L .lbl-batch .main{flex-direction:column;align-items:center;gap:4mm}
-  #print-area.lbl-L .lbl-batch .size{font-size:56pt}
-  #print-area.lbl-L .lbl-batch .color{font-size:34pt}
-  #print-area.lbl-L .lbl-batch .qty{font-size:40pt}
-  #print-area.lbl-L .lbl-batch .qty small{font-size:16pt}
-  #print-area.lbl-L .lbl-batch .t:last-child{flex-direction:column;align-items:center;gap:1mm}
-  #print-area.lbl-L .lbl-badge .nm{font-size:44pt}
-  #print-area.lbl-L .lbl-cmd .nm{font-size:38pt}
+  #print-area.lbl-L .lbl-batch .t b,#print-area.lbl-L .lbl-batch .made{font-size:18pt}
+  #print-area.lbl-L .lbl-batch .main{flex-direction:row;align-items:baseline;justify-content:center;gap:6mm}
+  #print-area.lbl-L .lbl-batch .size{font-size:46pt}
+  #print-area.lbl-L .lbl-batch .color{font-size:30pt}
+  #print-area.lbl-L .lbl-batch .qty{font-size:34pt}
+  #print-area.lbl-L .lbl-batch .qty small{font-size:14pt}
+  #print-area.lbl-L .lbl-batch .t:last-child{flex-direction:row;align-items:baseline;justify-content:center;gap:6mm}
+  #print-area.lbl-L .lbl-badge .nm{font-size:40pt}
+  #print-area.lbl-L .lbl-cmd .nm{font-size:36pt}
 }
 
 /* door work orders (owner 23 Nov 2026): one label per net, the scan shows only the next step */
@@ -541,8 +542,16 @@ tr.odd td{background:var(--soft-warn)}
 .lbl-wo .wl-code{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;font-size:8pt;display:flex;justify-content:center;gap:3mm;line-height:1.1;white-space:nowrap}
 @media print{
   #print-area .lbl-wo{padding:.6mm 1mm}
-  #print-area.lbl-L .lbl-wo .wl-net{flex-direction:column;align-items:center;gap:3mm;white-space:normal}
+  #print-area.lbl-L .lbl-wo .wl-net{flex-direction:row;align-items:baseline;justify-content:center;gap:6mm;white-space:nowrap}
   #print-area.lbl-L .lbl-wo .wl-size{font-size:64pt}
   #print-area.lbl-L .lbl-wo .wl-col{font-size:40pt}
-  #print-area.lbl-L .lbl-wo .wl-code{font-size:20pt;flex-direction:column;align-items:center;gap:2mm}
+  #print-area.lbl-L .lbl-wo .wl-code{font-size:22pt;gap:8mm}
 }
+/* delete work orders (v13) */
+.wo-delbar{align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+.wo-delc{border:2px solid var(--bad)}
+.wo-dellist{margin:4px 0 8px 18px;padding:0}
+label.chk{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-size:.95rem}
+label.chk input{width:20px;height:20px;flex:none;margin-top:1px}
+.wo-help{color:#fff;font-size:1.05rem;line-height:1.35;margin:8px 0}
+.wo-help .ibtn,.pa-step .ibtn{position:static;transform:none;vertical-align:middle;margin-left:4px}

@@ -35,7 +35,10 @@
 //   Tabs "Work orders" (one row per order), "WO nets" (one row per net, where it is now), "Production" (every scan, never deleted)
 //   and "Production daily" (per person, per step, per day: the numbers for the managers). Reject, send back for rework,
 //   manager fixes and whole-order steps, reprint (the old label stops working), due times, label printing rights for the day.
-var VERSION = 12;
+// Version 13 (23 Nov 2026): a manager or the owner deletes work orders: one, the ones ticked, or all (WODELETE, reason needed).
+//   The order, its nets (labels stop working) and, if chosen, its step history and the people's numbers for it go. Nets already
+//   racked in can come off stock and their box again (if chosen). Every deleted row is kept in the "WO deleted" tab first.
+var VERSION = 13;
 var TOP_BOX = 25;          // a full box on top of the racks holds 25 nets
 var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes', 'Pick lists']; // what a snapshot copies and a reset or restore replaces
 var KEEP_DAYS = 30;          // daily snapshots kept this long
@@ -45,7 +48,7 @@ var LOCK_MIN = 15;          // first lock; doubles with every further lock, up t
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, IN, OUT, pick, refill,
 // empty, swap, returns, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { WOBULK: 'Manager', WOSET: 'Manager', WODUE: 'Manager', WORIGHT: 'Manager', BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
+var NEEDS = { WODELETE: 'Manager', WOBULK: 'Manager', WOSET: 'Manager', WODUE: 'Manager', WORIGHT: 'Manager', BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -63,6 +66,7 @@ var TABS = {
   'WO nets': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
   'WO nets done': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
   Production: ['Event ID', 'Time', 'Worker ID', 'Worker', 'Order', 'Net code', 'Net', 'Step', 'Action', 'Minutes', 'Box', 'Reason', 'Caused by', 'Entered by', 'Station', 'Before', 'After', 'Undone'],
+  'WO deleted': ['Deleted at', 'By', 'Reason', 'Tab', 'Row'],
   'Production daily': ['Day', 'Worker ID', 'Worker', 'Step', 'Received', 'Done', 'Minutes', 'Timed', 'Rejects caused', 'Rework caused', 'First', 'Last']
 };
 // In boxes: how many nets are in each box (or TOP), one row per box + net. Put away adds, a manager's box change or an
@@ -910,6 +914,7 @@ function woApply_(ev, me, station) {
     return null;
   }
   if (ev.type === 'WOUNDO') return woUndo_(ev, me, t, station);
+  if (ev.type === 'WODELETE') return woDelete_(ev, me, t, station);
   return 'Unknown work order scan.';
 }
 // undo a work order scan (your own, within 15 minutes on your phone; a manager any): the net goes back to where it was,
@@ -941,6 +946,65 @@ function woUndo_(ev, me, t, station) {
     W.prod.push([ev.id + (hit.length > 1 ? '#' + h.row : ''), t, me.id, workerName_(me.id), x[4], x[5], x[6], x[7], 'Undo ' + x[8], '', x[10], ev.reason || '', '', me.id, station, '', '', '']);
   });
   return null;
+}
+// delete work orders (manager or owner): ev.orders = the ones ticked, or ev.all. ev.stockOff: nets already racked in come off
+// stock and off their box again. ev.history (default yes): the step history and the people's numbers for these orders go too.
+// ev.restart: when no order is left, the next order is WOMQD001 again. Every row removed is copied to "WO deleted" first.
+function woDelete_(ev, me, t, station) {
+  if (!String(ev.reason || '').trim()) return 'Say why the work orders are deleted.';
+  woFlush_(); // earlier scans in this same call are written first
+  var W = woLoad_(), want = {};
+  if (ev.all) W.o.forEach(function (o) { if (o[0]) want[o[0]] = 1; });
+  else (ev.orders || []).forEach(function (id) { if (W.oidx[String(id)] != null) want[String(id)] = 1; });
+  var ids = Object.keys(want).sort();
+  if (!ids.length) return ev.all ? 'There are no work orders to delete.' : 'Those work orders are not there any more.';
+  var keepHist = ev.history === false, who = workerName_(me.id), why = String(ev.reason).slice(0, 200), bak = [];
+  function save(tab, row) { bak.push([t, who, why, tab, JSON.stringify(row)]); }
+  // nets on the rack: stock and box numbers
+  var done = rows_('WO nets done'), racked = {}, nRacked = 0, nNets = 0;
+  W.r.concat(done).forEach(function (r) { if (!r[0] || !want[r[1]]) return; nNets++; if (String(r[5]) === 'racked') { nRacked++; var k = r[3] + '|' + (String(r[8]) === '2F' ? 'TOP' : String(r[8] || 'TOP')); racked[k] = (racked[k] || 0) + 1; } });
+  var off = 0;
+  if (ev.stockOff) Object.keys(racked).forEach(function (k) {
+    var p = k.split('|'), s = findRow_('Stock', p[0]), have = s ? Number(s.values[2]) || 0 : 0, q = Math.min(racked[k], have);
+    if (q > 0) { stock_(p[0], '', -q, 'add', 'Work order deleted', t); off += q; }
+    takeOff_(p[1], p[0], racked[k], t, me.id, ev.id);
+    sheet_('Scans').appendRow([ev.id + '-' + p[0] + '-' + p[1], t, 'WODEL', me.id, who, '', p[0], '', -q, '', p[1], 'Work order deleted: ' + racked[k] + ' racked net(s) taken off', station, why]);
+  });
+  // the people's numbers: take back what these orders added (scans already undone were taken back then)
+  var P = rows_('Production'), keepP = [];
+  P.forEach(function (x) {
+    if (!x[0]) return;
+    if (!want[String(x[4])] || keepHist) { keepP.push(x); return; }
+    save('Production', x);
+    if (x[17] || /^Undo /.test(String(x[8]))) return;
+    var when = new Date(x[1]), step = WO_STEPS.indexOf(String(x[7]));
+    if (x[8] === 'Received') daily_(when, String(x[2]), step, 4, -1);
+    if (x[8] === 'Done') daily_(when, String(x[2]), step, 5, -1, x[9] === '' ? null : Number(x[9]));
+    if (x[8] === 'Rack-in') daily_(when, String(x[2]), WO_RACK, 5, -1);
+    if (x[12]) { var aft = []; try { aft = JSON.parse(x[16]); } catch (e) {} daily_(when, String(x[12]), x[8] === 'Rework' ? aft[0] : step - 1, x[8] === 'Rework' ? 9 : 8, -1); }
+  });
+  if (W.daily) writeRows_('Production daily', W.daily.rows, W.ddirty, WO_D);
+  var keepN = W.r.filter(function (r) { if (!r[0]) return false; if (want[r[1]]) { save('WO nets', r); return false; } return true; });
+  var keepD = done.filter(function (r) { if (!r[0]) return false; if (want[r[1]]) { save('WO nets done', r); return false; } return true; });
+  var keepO = W.o.filter(function (o) { if (!o[0]) return false; if (want[o[0]]) { save('Work orders', o); return false; } return true; });
+  if (ev.stockOff) { // the rack-in lines of these orders leave the scan log too (their stock change was just taken back)
+    var sc = sheet_('Scans'), sr = rows_('Scans');
+    for (var i = sr.length - 1; i >= 0; i--) if ((sr[i][2] === 'WOIN' || sr[i][2] === 'WOUNDO') && want[String(sr[i][5])]) { save('Scans', sr[i]); sc.deleteRow(i + 2); }
+  }
+  WO_ = null;
+  if (bak.length) { var B = sheet_('WO deleted'), bl = B.getLastRow(); ensureRows_(B, bl + 1 + bak.length); B.getRange(bl + 1, 1, bak.length, 5).setValues(bak); }
+  rewrite_('WO nets', keepN, WO_N); rewrite_('WO nets done', keepD, WO_N); rewrite_('Work orders', keepO, WO_O);
+  if (!keepHist) rewrite_('Production', keepP, WO_P);
+  var restarted = false;
+  if (ev.restart && !keepO.length) { PropertiesService.getScriptProperties().setProperty('WO_SEQ_MQD', '0'); restarted = true; }
+  sheet_('Scans').appendRow([ev.id, t, 'WODEL', me.id, who, ids.length > 3 ? ids[0] + ' … ' + ids[ids.length - 1] : ids.join(', '), '', '', ids.length, '',
+    '', 'Deleted ' + ids.length + ' work order(s), ' + nNets + ' nets' + (nRacked ? ', ' + nRacked + ' racked: ' + (ev.stockOff ? off + ' taken off stock' : 'stock kept') : '') + (keepHist ? ', step history kept' : '') + (restarted ? ', numbers start again at WOMQD001' : '') + ' · reason: ' + why, station, why]);
+  return null;
+}
+function rewrite_(name, rows, width) { // replace every row under the titles
+  var sh = sheet_(name), n = sh.getLastRow();
+  if (n > 1) sh.getRange(2, 1, n - 1, width).clearContent();
+  if (rows.length) { ensureRows_(sh, rows.length + 1); sh.getRange(2, 1, rows.length, width).setValues(rows.map(function (r) { var o = r.slice(0, width); while (o.length < width) o.push(''); return o; })); }
 }
 // make orders (manager, or label printing today). Each order gets the next number; one row per net, all written at once.
 function woCreate_(me, body) {

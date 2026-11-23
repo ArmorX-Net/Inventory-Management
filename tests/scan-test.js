@@ -433,9 +433,9 @@ const STEPS = [
   expect('rack layout shows AR C1 R3 as 210x100 Black pick box', await p4.$eval('#print-area .rsheet', (e) => { const td = e.querySelectorAll('tbody tr')[2].querySelectorAll('td')[0]; return /210×100/.test(td.textContent) && /Black/.test(td.textContent) && !/BACKUP/.test(td.textContent); }));
   // labels (owner 23 Nov 2026): every label print asks Small 50x25 or Large 101.6x152.4, one label per page, exact page size
   await p4.click('#pL');
-  expect('shelf labels ask: Small or Large', /Small[\s\S]*50 × 25 mm[\s\S]*Large[\s\S]*101.6 × 152.4 mm/.test(await p4.textContent('#lblAsk')));
+  expect('shelf labels ask: Small or Large', /Small[\s\S]*50 × 25 mm[\s\S]*Large[\s\S]*4 × 6 in, landscape/.test(await p4.textContent('#lblAsk')));
   await p4.click('[data-lsz="L"]');
-  expect('Large: page 101.6 x 152.4 mm, no margins, 30 labels', /size:101.6mm 152.4mm;margin:0/.test(await p4.textContent('#page-size')) && (await p4.$$('#print-area.lbl-L .lbl-loc')).length === 30 && !(await p4.$('#lblAsk')));
+  expect('Large: page 152.4 x 101.6 mm (landscape), no margins, 30 labels', /size:152.4mm 101.6mm;margin:0/.test(await p4.textContent('#page-size')) && (await p4.$$('#print-area.lbl-L .lbl-loc')).length === 30 && !(await p4.$('#lblAsk')));
   await p4.click('#pC'); await p4.click('[data-lsz="S"]');
   expect('Small: page 50.3 x 25.1 mm (the label template)', /size:50.3mm 25.1mm/.test(await p4.textContent('#page-size')) && !(await p4.$('#print-area.lbl-L')));
   await p4.click('#pW');
@@ -585,6 +585,7 @@ const STEPS = [
   const scan8 = async (c) => { await p8.fill('#scanIn', c); await p8.press('#scanIn', 'Enter'); await p8.waitForTimeout(60); return p8.textContent('#fb'); };
   const C1 = 'WOMQD001-01/2';
   await scan8(C1);
+  expect('first-time help: one plain line says what to tap, with an "i"', /Got this net for Cutting\? Tap Received/.test(await p8.textContent('.wo-help')) && !!(await p8.$('.wo-help [data-tip="WORECV"]')));
   expect('a net label shows only its next step: one button, Cutting: received', (await p8.$$('[data-wo]')).length === 1 && (await p8.textContent('[data-wo]')) === 'Cutting: received' && /Waiting for Cutting/.test(await p8.textContent('.wo-now')));
   await p8.click('[data-wo]');
   expect('tap: saved, the card closes, scan the next net', /Cutting: received/.test(await p8.textContent('#fb')) && !(await p8.$('.wo-card')) && (await S8()).wo.orders.WOMQD001.nets[1].st === 'recv');
@@ -633,6 +634,25 @@ const STEPS = [
   await p8.evaluate(() => { location.hash = 'production'; }); await p8.waitForSelector('.wo-board');
   expect('production page shows where nets pile up (7 at Cutting: 3 waiting, 4 in work)', /^7\s*Cutting\s*3 waiting · 4 in work/.test(await p8.textContent('.wo-col.pile')));
   expect('production page fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  // delete work orders (owner 23 Nov 2026, v13): see what is in them, a reason, racked nets off stock
+  await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew'); await p8.click('[data-wo-f="all"]');
+  const st8 = (await S8()).stock[WN] || 0;
+  await p8.check('[data-wo-tick="WOMQD001"]'); await p8.click('#woDelSel');
+  const dtx = await p8.textContent('.wo-delc');
+  expect('delete: shows where the nets are first (1 on the rack, 1 rejected) and offers to take the racked net off stock', /1 on the rack/.test(dtx) && /1 rejected/.test(dtx) && /Take the 1 racked net off stock/.test(dtx) && await p8.isChecked('#woDelStock'));
+  await p8.click('#woDelGo');
+  expect('delete: a reason is needed', /Pick why/.test(await p8.textContent('#woDelMsg')) && !!(await S8()).wo.orders.WOMQD001);
+  await p8.selectOption('#woDelWhy', 'Test orders'); await p8.click('#woDelGo');
+  w8 = await S8();
+  expect('delete: the order is gone, the racked net is off stock, and it is sent to the sheet with the reason', !w8.wo.orders.WOMQD001 && (w8.stock[WN] || 0) === st8 - 1 && w8.log.some((e) => e.type === 'WODELETE' && e.orders.join() === 'WOMQD001' && e.reason === 'Test orders' && e.stockOff === true));
+  await p8.click('#woDelAll');
+  expect('clear all: asks to type DELETE and offers numbers from WOMQD001 again', !!(await p8.$('#woDelType')) && !!(await p8.$('#woDelNo')));
+  await p8.selectOption('#woDelWhy', 'Test orders'); await p8.click('#woDelGo');
+  expect('clear all: refused until DELETE is typed', /Type DELETE/.test(await p8.textContent('#woDelMsg')));
+  await p8.fill('#woDelType', 'delete'); await p8.click('#woDelGo');
+  w8 = await S8();
+  expect('clear all: no work orders left', Object.keys(w8.wo.orders).length === 0 && w8.log.some((e) => e.type === 'WODELETE' && e.all === true && e.restart === true));
+  expect('work orders page with delete fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await p8.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
