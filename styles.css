@@ -555,3 +555,14 @@ label.chk{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-size:.95
 label.chk input{width:20px;height:20px;flex:none;margin-top:1px}
 .wo-help{color:#fff;font-size:1.05rem;line-height:1.35;margin:8px 0}
 .wo-help .ibtn,.pa-step .ibtn{position:static;transform:none;vertical-align:middle;margin-left:4px}
+/* many sizes in one order, where packed nets go (v14) */
+.wo-form > .small,.wo-form .wo-addrow,.wo-form details,.wo-form #woLinesBox{grid-column:1 / -1}
+.wo-addrow{gap:10px;flex-wrap:wrap}
+.wo-addrow .f{flex:1 1 120px}
+.wo-paste summary{cursor:pointer;font-weight:600;padding:4px 0}
+.wo-lines td{vertical-align:middle}
+.wo-ready{margin:8px 0 4px;font-size:1.05rem}
+.wo-dests{grid-template-columns:1fr}
+.wo-apart .wo-ag{border-top:1px solid var(--line);padding:6px 0}
+.wo-apart .wo-ag:first-of-type{border-top:none}
+.wo-form .wide{grid-column:1 / -1}
