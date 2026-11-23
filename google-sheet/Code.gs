@@ -25,7 +25,12 @@
 // Version 10 (22 Nov 2026): the top of the racks is kept as full boxes (25 each) and part boxes. "In boxes" and "Counts"
 //   get a "Part boxes" column for TOP (e.g. "22,14"); full boxes = (nets on top - part boxes) / 25, so old TOP numbers
 //   need no change: they show as full boxes. Box recount (BOXCOUNT) is for managers. No limits on any number.
-var VERSION = 10;
+// Version 11 (23 Nov 2026): pick lists get a number for the day (#1, #2 ...). Final can keep stock as it is ("No, don't remove":
+//   Stock column "kept"; the pickers' OUT takes the nets off). A manager can undo Final before anything is picked (PICKUNDO:
+//   nets back to stock, the list is marked "undone"). A picker confirms "Picking done" (PICKDONE: Done by / Done at, no number changes).
+//   "Yes, remove from stock" now also takes the nets off the boxes at Final (Stock column "boxes", From = which boxes, e.g.
+//   "AR-C3-R5:1,TOP:2"), so the box numbers go down at once; the pickers' OUT then only ticks the list. Older lists ("off") work as before.
+var VERSION = 11;
 var TOP_BOX = 25;          // a full box on top of the racks holds 25 nets
 var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes', 'Pick lists']; // what a snapshot copies and a reset or restore replaces
 var KEEP_DAYS = 30;          // daily snapshots kept this long
@@ -35,7 +40,7 @@ var LOCK_MIN = 15;          // first lock; doubles with every further lock, up t
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, IN, OUT, pick, refill,
 // empty, swap, returns, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
+var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -47,7 +52,7 @@ var TABS = {
   Boxes:   ['Box', 'State', 'Net ID', 'Batch', 'Made', 'Updated', 'By'],
   Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID', 'Part boxes'],
   'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID', 'Part boxes'],
-  'Pick lists': ['List', 'Net ID', 'Net', 'Qty', 'Picked', 'Created', 'By', 'State', 'Updated'],
+  'Pick lists': ['List', 'Net ID', 'Net', 'Qty', 'Picked', 'Created', 'By', 'State', 'Updated', 'No', 'Stock', 'Note', 'Done by', 'Done at', 'From'],
   Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row']
 };
 // In boxes: how many nets are in each box (or TOP), one row per box + net. Put away adds, a manager's box change or an
@@ -252,15 +257,16 @@ function doGet(e) {
   var counts = rows_('Counts').filter(function (r) { return r[0] && r[1]; }).map(function (r) { var o = { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; if (String(r[7])) o.parts = parts_(r[7]); return o; });
   var shelf = rows_('In boxes').filter(function (r) { return r[0] && r[1]; }).map(function (r) { var o = { box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, at: iso_(r[4]), by: r[5] }; if (String(r[7])) o.parts = parts_(r[7]); return o; });
   var tz = Session.getScriptTimeZone(), day = Utilities.formatDate(new Date(), tz, 'yyyyMMdd'), isDay = function (v) { return v && typeof v.getTime === 'function' && Utilities.formatDate(v, tz, 'yyyyMMdd') === day; };
-  var picks = rows_('Pick lists').filter(function (r) { return r[0] && r[1] && (String(r[7]) !== 'done' || isDay(r[8])); }).map(function (r) {
-    return { list: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, picked: Number(r[4]) || 0, created: iso_(r[5]), by: r[6], state: String(r[7] || 'open') };
+  var picks = rows_('Pick lists').filter(function (r) { return r[0] && r[1] && String(r[7]) !== 'undone' && (String(r[7]) !== 'done' || isDay(r[8]) || isDay(r[5])); }).map(function (r) {
+    return { list: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0, picked: Number(r[4]) || 0, created: iso_(r[5]), by: r[6], state: String(r[7] || 'open'),
+      no: Number(r[9]) || 0, keep: String(r[10]) === 'kept', boxed: String(r[10]) === 'boxes', note: String(r[11] || ''), doneBy: String(r[12] || ''), doneAt: iso_(r[13]), from: from_(r[14]) };
   });
   var today = {}; // what went out of stock today, per net: picks and FBA, plus pick lists made final today
   rows_('Scans').forEach(function (r) {
     if ((r[2] !== 'OUT' && r[2] !== 'FBA') || !r[6] || !isDay(r[1]) || String(r[11]).indexOf(' · UNDONE') >= 0) return;
     today[r[6]] = (today[r[6]] || 0) + (Number(r[8]) || 0);
   });
-  rows_('Pick lists').forEach(function (r) { if (r[1] && isDay(r[5])) today[r[1]] = (today[r[1]] || 0) + (Number(r[3]) || 0); });
+  rows_('Pick lists').forEach(function (r) { if (r[1] && isDay(r[5]) && String(r[7]) !== 'undone' && String(r[10]) !== 'kept') today[r[1]] = (today[r[1]] || 0) + (Number(r[3]) || 0); }); // kept lists go out through OUT
   return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, picks: picks, outToday: today, resetAt: resetAt_(), snaps: atLeast_(me.level, 'Admin') ? snapList_() : [], at: new Date().toISOString() });
 }
 function snapList_() { // newest first: id, time, by, rows
@@ -403,6 +409,11 @@ function apply_(ev, station) {
     var bq = Number(ev.qty) || 0;
     pickLine_(ev.list, ev.net, 0, -bq, t);
     if (ev.restock && bq) stock_(ev.net, ev.netName, bq, 'add', 'Back from pick list ' + ev.list, t);
+    if (ev.restock && bq && ev.backTo) countAdd_(ev.backTo === '2F' ? 'TOP' : ev.backTo, ev.net, ev.netName, bq, false, t, ev.who, ev.id, 'In boxes'); // a list that took it off the box: back in the box
+  } else if (ev.type === 'PICKUNDO') { // a manager undoes Final: nets back to stock (unless it kept stock), list marked undone
+    pickUndo_(ev, t);
+  } else if (ev.type === 'PICKDONE') { // a picker says the list is picked: for information only, no number changes
+    pickDone_(ev, t);
   } else if (ev.type === 'RESTORE') {
     restore_(ev, t);
   } else if (ev.type === 'RESET') {
@@ -564,15 +575,52 @@ function boxQty_(ev, t) {
 // One row per list + net. Qty = nets taken off stock for it, Picked = nets the pickers ticked off. State open / done.
 function pickList_(ev, t) {
   if (!ev.list || rows_('Pick lists').some(function (r) { return String(r[0]) === String(ev.list); })) return; // a list comes off stock only once
-  var sh = sheet_('Pick lists'), out = [], n = 0;
+  var sh = sheet_('Pick lists'), out = [], n = 0, keep = !!ev.keep, boxes = !keep && !!ev.boxes, no = pickNo_(t);
   (ev.lines || []).forEach(function (l) {
     var q = Math.max(0, Math.round(Number(l.qty) || 0)); if (!l.net || !q) return;
-    stock_(l.net, l.netName, -q, 'add', 'Pick list ' + ev.list, t);
-    out.push([ev.list, l.net, l.netName || '', q, 0, t, workerName_(ev.who), 'open', new Date()]); n += q;
+    if (!keep) stock_(l.net, l.netName, -q, 'add', 'Pick list #' + no + ' ' + ev.list, t);
+    var from = boxes ? from_(l.from) : [];
+    from.forEach(function (f) { takeOff_(f[0], l.net, f[1], t, ev.who, ev.id); });
+    out.push([ev.list, l.net, l.netName || '', q, 0, t, workerName_(ev.who), 'open', new Date(), no, keep ? 'kept' : boxes ? 'boxes' : 'off', String(l.note || ''), '', '', fromText_(from)]); n += q;
   });
   if (out.length) sh.getRange(sh.getLastRow() + 1, 1, out.length, TABS['Pick lists'].length).setValues(out);
   var row = findRow_('Scans', ev.id);
-  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Pick list ' + ev.list + ' final: ' + n + ' nets off stock (' + out.length + ' lines)');
+  if (row) sheet_('Scans').getRange(row.row, 12).setValue('Pick list #' + no + ' (' + ev.list + ') final: ' + n + ' nets' + (keep ? ', stock not changed' : ' off stock') + ' (' + out.length + ' lines)');
+}
+// which boxes the nets of a list came off: [[box, qty], ...] from the app, or "AR-C3-R5:1,TOP:2" from the sheet
+function from_(v) {
+  var a = Array.isArray(v) ? v : String(v == null ? '' : v).split(',').filter(Boolean).map(function (x) { var i = x.lastIndexOf(':'); return [x.slice(0, i), x.slice(i + 1)]; });
+  return a.map(function (f) { return [String(f[0]) === '2F' ? 'TOP' : String(f[0]), Math.max(0, Math.round(Number(f[1]) || 0))]; }).filter(function (f) { return f[0] && f[1] > 0; });
+}
+function fromText_(a) { return a.map(function (f) { return f[0] + ':' + f[1]; }).join(','); }
+// the next number for a list made that day: one more than the highest number of that day's lists (undone lists do not count)
+function pickNo_(t) {
+  var tz = Session.getScriptTimeZone(), day = Utilities.formatDate(t, tz, 'yyyyMMdd'), lists = {}, max = 0;
+  rows_('Pick lists').forEach(function (r) {
+    if (!r[0] || String(r[7]) === 'undone' || !r[5] || typeof r[5].getTime !== 'function' || Utilities.formatDate(r[5], tz, 'yyyyMMdd') !== day) return;
+    lists[r[0]] = 1; max = Math.max(max, Number(r[9]) || 0);
+  });
+  return Math.max(max, Object.keys(lists).length) + 1;
+}
+// undo Final (manager): only while nothing of the list is picked. Nets go back to stock unless the list kept stock.
+function pickUndo_(ev, t) {
+  var sh = sheet_('Pick lists'), r = rows_('Pick lists'), mine = [], row = findRow_('Scans', ev.id), say = function (x) { if (row) sheet_('Scans').getRange(row.row, 12).setValue(x); };
+  r.forEach(function (x, i) { if (String(x[0]) === String(ev.list)) mine.push({ x: x, j: i }); });
+  if (!mine.length || mine.some(function (o) { return String(o.x[7]) === 'undone'; })) { say('Undo of pick list ' + ev.list + ' refused: no such list'); return; }
+  if (mine.some(function (o) { return (Number(o.x[4]) || 0) > 0; })) { say('Undo of pick list ' + ev.list + ' refused: nets were already picked'); return; }
+  var n = 0, no = Number(mine[0].x[9]) || '';
+  mine.forEach(function (o) {
+    var q = Number(o.x[3]) || 0;
+    if (String(o.x[10]) !== 'kept' && q) { stock_(String(o.x[1]), o.x[2], q, 'add', 'Undo pick list #' + no + ' ' + ev.list, t); n += q; }
+    if (String(o.x[10]) === 'boxes') from_(o.x[14]).forEach(function (f) { countAdd_(f[0], String(o.x[1]), o.x[2], f[1], false, t, ev.who, ev.id, 'In boxes'); }); // back into the boxes it came from
+    sh.getRange(o.j + 2, 8, 1, 2).setValues([['undone', new Date()]]);
+  });
+  say('Pick list #' + no + ' (' + ev.list + '): Final undone' + (n ? ', ' + n + ' nets back to stock' : ', stock not changed'));
+}
+// picking done (any signed-in worker): who and when, on every line of the list. Stock, boxes and the list numbers stay as they are.
+function pickDone_(ev, t) {
+  var sh = sheet_('Pick lists'), who = workerName_(ev.who);
+  rows_('Pick lists').forEach(function (x, i) { if (String(x[0]) === String(ev.list) && String(x[7]) !== 'undone') sh.getRange(i + 2, 13, 1, 2).setValues([[who, t]]); });
 }
 function pickLine_(list, net, dPicked, dQty, t) {
   var sh = sheet_('Pick lists'), r = rows_('Pick lists'), hit = false;

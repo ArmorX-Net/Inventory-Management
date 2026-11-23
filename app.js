@@ -244,14 +244,48 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     barcode(el.querySelector('.bc'), c[0], null, '10mm');
     return el;
   }
+  // LABEL SIZES (owner 23 Nov 2026): the thermal printer takes two label rolls. Every label print asks which one is in it,
+  // and the label fills that exact size, one label per page. A4 is only for lists and the rack side signs.
+  //   Small 50 x 25 mm (page 50.3 x 25.1 mm, the ArmorX Word label template) · Large 101.6 x 152.4 mm (4 x 6 inch, upright)
+  var LBL_SIZES = { S: { name: 'Small', dim: '50 × 25 mm', page: '50.3mm 25.1mm', margin: '0.25mm 0.25mm 0 0.25mm' }, L: { name: 'Large', dim: '101.6 × 152.4 mm', page: '101.6mm 152.4mm', margin: '0' } };
   function printLabels(nodes, size) {
+    if (size !== '50x25') { printNow(nodes, size); return; }
+    askLabelSize(function (k) { printNow(nodes, k); });
+  }
+  function askLabelSize(go) { // which labels are in the printer? Small or Large, remembered on this phone
+    var old = document.getElementById('lblAsk'); if (old) old.remove();
+    var last = (S.settings && S.settings.lblSize) || 'S', el = document.createElement('div');
+    el.className = 'pop'; el.id = 'lblAsk';
+    el.innerHTML = '<div class="pop-card lbl-ask" role="dialog" aria-modal="true" aria-label="Label size"><h3>Which labels are in the printer?</h3><div class="lbl-ask-b">' +
+      ['S', 'L'].map(function (k) { var z = LBL_SIZES[k]; return '<button type="button" class="btn' + (k === last ? ' primary' : '') + '" data-lsz="' + k + '"><b>' + z.name + '</b><span>' + z.dim + '</span></button>'; }).join('') +
+      '</div><div class="small">In the print box: paper size the same as the labels, margins <b>None</b>, scale <b>100</b>, and untick <b>Headers and footers</b>.</div><button type="button" class="btn dark pop-x" data-lsz="">Cancel</button></div>';
+    document.body.appendChild(el); document.body.classList.add('pop-on');
+    var close = function () { el.remove(); document.body.classList.remove('pop-on'); };
+    el.onclick = function (e) {
+      var b = e.target.closest('[data-lsz]'); if (!b && e.target !== el) return;
+      close(); if (!b || !b.dataset.lsz) return;
+      S.settings = S.settings || {}; S.settings.lblSize = b.dataset.lsz; save(); go(b.dataset.lsz);
+    };
+  }
+  function sizeBarcodes(area, big) { // a large label gets a bigger barcode: whole printer dots, quiet zones kept, never stretched
+    if (!big) return;
+    area.querySelectorAll('svg.bc').forEach(function (svg) {
+      var modules = parseFloat(svg.getAttribute('width')) || 100, mm = 0.508;
+      while ((modules + 2 * QUIET) * mm > 92 && mm > 0.254) mm -= 0.127;
+      svg.style.width = (modules * mm).toFixed(3) + 'mm'; svg.style.height = '30mm'; svg.style.padding = '0 ' + (QUIET * mm).toFixed(2) + 'mm';
+    });
+  }
+  function printNow(nodes, size) {
     var area = document.getElementById('print-area'); area.innerHTML = '';
     nodes.forEach(function (n) { area.appendChild(n); });
+    var lbl = LBL_SIZES[size];
+    area.className = lbl ? 'lbl-' + size : '';
+    sizeBarcodes(area, size === 'L');
     var st = document.getElementById('page-size');
     if (!st) { st = document.createElement('style'); st.id = 'page-size'; document.head.appendChild(st); }
-    var dim = size === '50x25' ? '50.3mm 25.1mm' : size === 'A4' ? 'A4 landscape' : size === 'A4P' ? 'A4 portrait' : '100mm 50mm';
-    st.textContent = '@page{size:' + dim + ';margin:' + (/^A4/.test(size) ? '10mm' : '0.25mm 0.25mm 0 0.25mm') + '}'; // 50x25: same page and margins as the ArmorX Word label template (2850 x 1425 twips)
-    toast(/^A4/.test(size) ? 'Opening print dialog: normal printer, ' + dim + '.' : 'Opening print dialog: pick the thermal printer and paper ' + dim.replace(/ /, ' × ') + ', margins none.');
+    var dim = lbl ? lbl.page : size === 'A4' ? 'A4 landscape' : 'A4 portrait';
+    st.textContent = '@page{size:' + dim + ';margin:' + (lbl ? lbl.margin : '10mm') + '}';
+    toast(lbl ? 'Opening print dialog: thermal printer, ' + lbl.name + ' labels ' + lbl.dim + ', margins None, no headers and footers.' : 'Opening print dialog: normal printer, ' + dim + '.');
     setTimeout(function () { try { window.print(); } catch (e) {} }, 150);
   }
 
@@ -296,13 +330,20 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="grid">' +
       kpi(total.toLocaleString(), 'Doornets on racks', '') + kpi(out, 'Nets out of stock', out ? 'bad' : 'ok') + kpi(low, 'Below refill level', low ? 'warn' : 'ok') +
       kpi(open.length + ' · ' + inProd, 'Batches · nets in production', '') + kpi(inToday, 'In today (rack-in + returns)', '') + kpi(outToday, 'Out today (orders + FBA)', '') + '</div>' +
-      countCard() +
+      countCard() + pickCard() +
       '<div class="card"><h3>Production board</h3><div class="tablewrap" style="border:none"><div class="board">' + cols + '</div></div><div class="small muted">Each card is one batch label. It moves one column each time someone scans it.</div></div>' +
       '<div class="grid2"><div class="card"><h3>Needs attention</h3><div class="tablewrap"><table><thead><tr><th>Net</th><th>Rack</th><th>On hand</th><th>Sells/day</th><th></th><th></th></tr></thead><tbody>' + (lowRows || '<tr><td colspan="6" class="muted">Everything is above its refill level.</td></tr>') + '</tbody></table></div></div>' +
       '<div class="card"><h3>Nets finished per person today</h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Step</th><th>Nets</th></tr></thead><tbody>' + wRows + '</tbody></table></div>' +
       '<h3>Last scans</h3><div class="tablewrap"><table><tbody>' + S.log.slice(0, 8).map(logRow).join('') + '</tbody></table></div></div></div>');
     app.querySelectorAll('[data-make]').forEach(function (b) { b.onclick = function () { location.hash = '#batches'; setTimeout(function () { prefill(b.dataset.make, b.dataset.qty); }, 30); }; });
     app.querySelectorAll('[data-wo]').forEach(function (d) { d.onclick = function () { showBatch(d.dataset.wo); }; });
+  }
+  function pickCard() { // today's pick lists for the manager: how far each is, and who said picking is done
+    var lists = shownPicks(); if (!lists.length) return '';
+    return '<div class="card"><h3><a href="#pick">Pick lists</a></h3><div class="small pl-dash">' + lists.map(function (p) {
+      var m = pickSum(p);
+      return '<div><b>' + esc(pickTitle(p)) + '</b> · ' + m.got + ' of ' + m.all + ' picked · ' + doneLine(p) + '</div>';
+    }).join('') + '</div></div>';
   }
   function kpi(n, l, cls) { return '<div class="card kpi ' + cls + '"><span class="n">' + n + '</span><span class="l">' + esc(l) + '</span></div>'; }
   function logRow(e) {
@@ -652,7 +693,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       fb('A quantity needs a box first. Scan OUT, FBA, RETURN or COUNT, then a box label.', 'bad'); return;
     }
     var n = sess.net, before = onHand(n.id), mode = sess.mode;
-    if (mode === 'OUT' && pickLeft(n.id)) { // pick for order of a net on the pick list: tick it off, stock already went down
+    if (mode === 'OUT' && (pickLeft(n.id) || keptLeft(n.id))) { // pick for order of a net on the pick list: tick it off, stock already went down
       var pr = outNets(n, q, sess.loc, function () { return 'Order pick'; });
       if (pr.err) { fb('Only ' + pr.err + ' on hand for ' + esc(netLabel(n)) + '. Check the box, or scan COUNT to correct it.', 'bad'); return; }
       fb('<b>OUT ' + q + '</b> · ' + esc(netLabel(n)) + ' · ' + pickSaid(pr) + 'now ' + onHand(n.id) + ' in total.', 'ok');
@@ -918,9 +959,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     } else {
       var n = BY_ID[pa.net], c = pa.box, have = counted(c, n.id), known = !!S.shelf[countKey(c, n.id)], cap = boxCap(c, n.id), out = paOut();
       var others = homeOf(n).filter(function (x) { return x !== c; });
-      var left = pickLeft(n.id), anyList = openPicks().length;
       adj.innerHTML = '<div class="pa pa-card' + (out ? ' pa-outc' : '') + '"><div class="pa-net"><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n).replace('x', ' × ')) + '<span class="pa-tot">' + onHand(n.id) + ' in stock</span></div>' +
-        (out && left ? '<div class="pa-pick">✓ On the pick list: <b>' + left + '</b> to pick. Already off stock: your number only ticks the list.</div>' : out && anyList ? '<div class="pa-pick no">Not on the pick list. This takes it off stock.</div>' : '') +
+        (out ? pickNote(n) : '') +
         '<div class="pa-go">' + (out ? 'Take it out of box' : 'Put it in box') + '</div><div class="pa-loc">' + esc(c) + '</div><div class="pa-hint">' + esc(locHint(c)) + '</div>' +
         '<div class="pa-have">In this box: <b>' + (known ? have : '—') + '</b>' + (cap ? ' · a full box holds ' + cap : '') + (!out && cap && have >= cap ? ' · <b>box is full</b>' : '') + '</div>' +
         '<div class="pa-step">' + (out ? 'How many did you take out?' : 'How many did you put in?') + '</div><div class="qbtns">' + [1, 2, 3, 4, 5, 10].map(function (q) { return '<button type="button" class="act pa-add" data-pa-add="' + q + '">' + (out ? '−' : '+') + q + '</button>'; }).join('') + '</div>' +
@@ -1015,14 +1055,15 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       var pp = t0.parts.slice().sort(function (a, b) { return a - b; }), big = pp.filter(function (p) { return p > q; })[0];
       if (pp.indexOf(q) >= 0) ops.del = [q]; else if (big) { ops.del = [big]; ops.add = [big - q]; } else if (t0.full && q < TOP_BOX) ops.add = [TOP_BOX - q];
     }
-    if (!warn && top && nets > t0.q) warn = 'The app has only <b>' + t0.q + '</b> nets of this net on top.';
-    if (!warn && !top && known && q > have) warn = 'The app has only <b>' + have + '</b> in this box.';
+    var bxd = Math.min(boxedLeft(n.id), nets), offBox = nets - bxd; // nets of a list already taken off the box at Final do not come off it again
+    if (!warn && top && offBox > t0.q) warn = 'The app has only <b>' + t0.q + '</b> nets of this net on top.';
+    if (!warn && !top && known && offBox > have) warn = 'The app has only <b>' + have + '</b> in this box.';
     if (!warn && nets >= ODD_TOP) warn = '<b>' + nets + '</b> nets is a lot to take out in one go.';
     var listed = Math.min(pickLeft(n.id), nets);
     if (nets - listed > onHand(n.id)) { fb('Only <b>' + onHand(n.id) + '</b> ' + esc(netLabel(n)) + ' in stock. Check the number, or ask the manager to count it.', 'bad'); return; }
-    var t1 = topSplit(Math.max(0, t0.q - nets), partsOps(t0.kept, ops));
+    var t1 = offBox ? topSplit(Math.max(0, t0.q - offBox), partsOps(t0.kept, ops)) : t0;
     check({ title: 'OUT · ' + netLabel(n), what: kind === 'full' ? q + ' full box' + (q > 1 ? 'es' : '') + ' (' + nets + ' nets) off the top of the rack' : kind === 'partbox' ? 'the part box of ' + q + ' off the top of the rack' : top ? q + ' nets off the top of the rack' : q + ' out of box ' + loc,
-      rows: [[top ? 'Top of rack' : 'Box ' + loc, top ? topText(t0) : (known ? have : '—'), top ? topText(t1) : (known ? Math.max(0, have - q) : '—')], ['Total in stock', onHand(n.id), onHand(n.id) - (nets - listed)]],
+      rows: [[top ? 'Top of rack' : 'Box ' + loc, top ? topText(t0) : (known ? have : '—'), top ? topText(t1) : (known ? Math.max(0, have - offBox) : '—')], ['Total in stock', onHand(n.id), onHand(n.id) - (nets - listed)]],
       notes: listed ? [listed + ' ' + (listed === 1 ? 'is' : 'are') + ' on the pick list: already off stock, this only ticks the list.'] : [],
       warn: warn, sure: kind === 'full' ? q + ' full boxes' : String(q) }, function () { paOutSave(n, loc, nets, top ? ops : null, kind, q); });
   }
@@ -1035,47 +1076,79 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     sess.pa = { net: null, box: null, size: null, last: n.id }; sess.await = 'pasize'; sess.net = null;
     paDraw();
   }
-  // ---------- pick lists (Code.gs version 9) ----------
-  // The manager presses Final on a pick list: the whole list leaves stock at once. When a picker then takes those nets out
-  // (OUT, or Pick for order), the app only ticks the list and takes them off the box: stock never goes down twice.
-  var PICK_V = 9;
-  function openPicks() { return Object.keys(S.picks || {}).map(function (k) { return S.picks[k]; }).filter(function (p) { return p.state !== 'done'; }).sort(function (a, b) { return (a.created || '') < (b.created || '') ? -1 : 1; }); }
+  // ---------- pick lists (Code.gs version 9, numbered lists and "don't remove" version 11) ----------
+  // The manager presses Final on a pick list. Yes: the whole list leaves stock at once, and when a picker then takes those
+  // nets out (OUT), the app only ticks the list and takes them off the box: stock never goes down twice.
+  // No (owner 23 Nov 2026): the list is still made and numbered, stock stays; the pickers' OUT takes the nets off stock and ticks it.
+  // Many lists a day: each has a number for that day (#1, #2 ...) with its date and time.
+  var PICK_V = 9, PICK2_V = 11;
+  function allPicks() { return Object.keys(S.picks || {}).map(function (k) { return S.picks[k]; }).filter(function (p) { return p.state !== 'undone'; }).sort(function (a, b) { return (a.created || '') < (b.created || '') ? -1 : 1; }); }
+  function openPicks() { return allPicks().filter(function (p) { return p.state !== 'done' && p.off !== false; }); } // off stock at Final
+  function keptPicks() { return allPicks().filter(function (p) { return p.state !== 'done' && p.off === false; }); } // stock comes off at OUT
   function pickLeft(id) { return openPicks().reduce(function (a, p) { var l = p.lines[id]; return a + (l ? Math.max(0, l.qty - l.picked) : 0); }, 0); }
+  // lists made final with version 11 also took the nets off the boxes at Final (owner 23 Nov 2026: "remove" means everything
+  // goes down at once). For those, a picker's OUT only ticks the list. Older lists still take the nets off the box at OUT.
+  function boxedLeft(id) { return openPicks().reduce(function (a, p) { var l = p.lines[id]; return a + (l && p.boxed ? Math.max(0, l.qty - l.picked) : 0); }, 0); }
+  function takeFromBoxes(n, q) { // which boxes the nets of a final list come off: pick box, backups, then the top of the racks
+    var out = [], rest = q;
+    homeOf(n).concat([FLOOR2]).forEach(function (c) { if (rest <= 0) return; var k = Math.min(counted(c, n.id), rest); if (k > 0) { out.push([c, k]); rest -= k; } });
+    return out;
+  }
+  function keptLeft(id) { return keptPicks().reduce(function (a, p) { var l = p.lines[id]; return a + (l ? Math.max(0, l.qty - l.picked) : 0); }, 0); }
+  function sameDay(a, b) { return new Date(a).toDateString() === new Date(b).toDateString(); }
+  function pickNo(p) { // the list's number for its day: from the sheet, or its place among that day's lists
+    if (p.no) return p.no;
+    var day = allPicks().filter(function (x) { return sameDay(x.created, p.created); });
+    return Math.max(1, day.indexOf(p) + 1 + day.filter(function (x) { return x.no; }).reduce(function (a, x) { return Math.max(a, x.no); }, 0) - day.filter(function (x) { return x.no; }).length);
+  }
+  function nextPickNo() { return allPicks().filter(function (p) { return isToday(p.created); }).reduce(function (a, p) { return Math.max(a, pickNo(p)); }, 0) + 1; }
+  function whenText(iso) { var d = new Date(iso); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  function pickTitle(p) { return 'Pick list #' + pickNo(p) + ' · ' + whenText(p.created); }
   function pickTick(list, id, d) {
     var p = (S.picks || {})[list]; if (!p || !p.lines[id]) return;
     p.lines[id].picked = Math.max(0, p.lines[id].picked + d);
     p.state = Object.keys(p.lines).every(function (k) { return p.lines[k].picked >= p.lines[k].qty; }) ? 'done' : 'open';
   }
+  function pickNote(n) { // the line on the OUT card
+    var left = pickLeft(n.id), kept = keptLeft(n.id);
+    if (left) return '<div class="pa-pick">✓ On the pick list: <b>' + left + '</b> to pick. Already off stock' + (boxedLeft(n.id) ? ' and off the box' : '') + ': your number only ticks the list.</div>';
+    if (kept) return '<div class="pa-pick">✓ On the pick list: <b>' + kept + '</b> to pick.</div>';
+    return allPicks().some(function (p) { return p.state !== 'done'; }) ? '<div class="pa-pick no">Not on the pick list. This takes it off stock.</div>' : '';
+  }
   function outNets(n, q, loc, note, top) { // returns { picked, rest } or { err: nets in stock }. top = part box changes on top of the rack
     var parts = [], rest = q;
     openPicks().forEach(function (p) { var l = p.lines[n.id]; if (!l || rest <= 0) return; var k = Math.min(Math.max(0, l.qty - l.picked), rest); if (k > 0) { parts.push({ list: p.id, q: k }); rest -= k; } });
     var before = onHand(n.id); if (rest > before) return { err: String(before) };
-    var where = loc === FLOOR2 ? 'top of rack' : loc, pk = {};
-    var evs = parts.map(function (x) { return { type: 'PICKED', who: sess.emp, list: x.list, net: n.id, qty: x.q, loc: loc, note: 'Pick list ' + x.list + ': picked ' + x.q + ' from ' + where }; });
+    var where = loc === FLOOR2 ? 'top of rack' : loc, pk = {}, kept = [], r2 = rest;
+    keptPicks().forEach(function (p) { var l = p.lines[n.id]; if (!l || r2 <= 0) return; var k = Math.min(Math.max(0, l.qty - l.picked), r2); if (k > 0) { kept.push({ list: p.id, q: k }); r2 -= k; } });
+    var boxedQ = 0; parts.forEach(function (x) { x.boxed = !!(S.picks[x.list] || {}).boxed; if (x.boxed) boxedQ += x.q; });
+    var evs = parts.map(function (x) { var e = { type: 'PICKED', who: sess.emp, list: x.list, net: n.id, qty: x.q, note: 'Pick list ' + x.list + ': picked ' + x.q + ' from ' + where + (x.boxed ? ' (already off the box)' : '') }; if (!x.boxed) e.loc = loc; return e; });
+    kept.forEach(function (x) { evs.push({ type: 'PICKED', who: sess.emp, list: x.list, net: n.id, qty: x.q, note: 'Pick list ' + x.list + ': picked ' + x.q + ' from ' + where + ' (off stock with this OUT)' }); }); // no box: the OUT takes it off
+    parts = parts.concat(kept);
     if (rest) evs.push({ type: 'OUT', who: sess.emp, net: n.id, qty: rest, loc: loc, note: note(rest) });
-    var ops = top && ((top.add || []).length || (top.del || []).length) ? top : null;
+    var ops = top && q > boxedQ && ((top.add || []).length || (top.del || []).length) ? top : null;
     if (ops) { evs[evs.length - 1].partAdd = ops.add; evs[evs.length - 1].partDel = ops.del; } // Code.gs applies them after the nets come off the top
     parts.forEach(function (x) { pickTick(x.list, n.id, x.q); pk[x.list + '|' + n.id] = x.q; });
     if (rest) S.stock[n.id] = before - rest;
     var ev = null; evs.forEach(function (e) { ev = addLog(e); });
     var key = countKey(FLOOR2, n.id), tr = S.shelf[key], keptBefore = loc === FLOOR2 && tr ? fitParts(tr.parts, Number(tr.qty) || 0) : null;
-    var sa = shelfAdd(loc, n.id, -q, true), spa = {}; if (sa && sa.add) spa[sa.key] = sa;
+    var sa = q > boxedQ ? shelfAdd(loc, n.id, -(q - boxedQ), true) : null, spa = {}; if (sa && sa.add) spa[sa.key] = sa;
     var tp = {};
     if (keptBefore && S.shelf[key]) { S.shelf[key].parts = fitParts(ops ? partsOps(keptBefore, ops) : keptBefore, Number(S.shelf[key].qty) || 0); tp[n.id] = { add: keptBefore, del: S.shelf[key].parts }; }
     var st = {}; if (rest) st[n.id] = rest;
     remember(ev, { stock: st, putAdd: spa, picks: pk, topParts: tp }); save();
-    return { picked: q - rest, rest: rest };
+    return { picked: q - rest, rest: rest, kept: rest - r2 };
   }
   function outToday(id) { // nets that left stock today: picks, FBA, pick lists made final (from the sheet when it has version 9)
     var n = S.outToday ? Number(S.outToday[id]) || 0 : 0;
     S.log.forEach(function (e) { // from the sheet: only what this phone did since the last refresh; without it: the log
       if (!isToday(e.t) || isUndone(e) || (S.outToday && !(S.outAt && e.t > S.outAt))) return;
       if ((e.type === 'OUT' || e.type === 'FBA') && e.net === id) n += Number(e.qty) || 0;
-      if (e.type === 'PICKLIST') (e.lines || []).forEach(function (l) { if (l.net === id) n += Number(l.qty) || 0; });
+      if (e.type === 'PICKLIST' && !e.keep) (e.lines || []).forEach(function (l) { if (l.net === id) n += Number(l.qty) || 0; });
     });
     return n;
   }
-  function pickSaid(r) { return r.picked ? '<b>' + r.picked + ' ticked off the pick list</b> (already off stock). ' + (r.rest ? r.rest + ' more taken off stock. ' : '') : ''; }
+  function pickSaid(r) { return r.picked ? '<b>' + r.picked + ' ticked off the pick list</b> (already off stock). ' + (r.rest ? r.rest + ' more taken off stock. ' : '') : r.kept ? '<b>' + r.kept + ' ticked off the pick list.</b> ' : ''; }
   // ---------- (box count continued) ----------
   function boxCounted(code) { return BOXES[code].nets.every(function (id) { return S.counts[countKey(code, id)]; }); }
   function countProgress() {
@@ -1480,30 +1553,48 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var nums = toks.filter(function (t) { return /^\d{1,3}$/.test(t); });
     return { net: n, qty: nums.length ? parseInt(nums[nums.length - 1], 10) : 1 };
   }
+  // owner 22 Nov 2026: pickers pick only from the boxes on the racks, never from the top. So the list compares with the pick box
+  // (plus the backup boxes for 210x100), not with the total. A short line gets a warning and a choice; it never blocks the list.
+  function rackOf(n) {
+    var pick = counted(n.pick, n.id), bk = (n.backups || []).reduce(function (a, c) { return a + counted(c, n.id); }, 0);
+    return { pick: pick, backup: bk, rack: pick + bk, known: homeOf(n).some(function (c) { return !!S.shelf[countKey(c, n.id)]; }), top: topOf(n.id) };
+  }
+  // the printed pick list (A4): the same sheet before Final and for every saved list, any time
+  function pickSheet(title, rows) { // rows: [{ n, qty, note (html) }]
+    var units = rows.reduce(function (a, x) { return a + x.qty; }, 0);
+    return '<div class="sheet"><h3>' + esc(title) + ' · ' + units + ' nets · picker ____________</h3><table><thead><tr><th>✓</th><th>Box</th><th>Net</th><th>Qty</th><th>In the box</th><th>Note</th></tr></thead><tbody>' +
+      rows.map(function (x) {
+        var n = x.n, r = rackOf(n);
+        return '<tr' + (x.drop ? ' class="pl-drop"' : '') + '><td>☐</td><td><b>' + esc(n.pick) + '</b>' + (r.backup ? '<br><small>backups ' + esc(n.backups.join(' ')) + '</small>' : '') + '</td><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><b>' + x.qty + '</b></td><td>' + r.rack + (r.backup ? ' <small>(' + r.pick + ' + ' + r.backup + ' backup)</small>' : '') + '</td><td>' + (x.note || '') + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<p class="small">Tap <b>OUT</b> on the scan station, type the size (or scan the shelf), tap the color and how many.</p></div>';
+  }
+  function pickRows(p) { return Object.keys(p.lines).map(function (id) { return BY_ID[id]; }).filter(Boolean).sort(function (a, b) { return sideOrder(a.pick, b.pick) || COLORS.indexOf(a.color) - COLORS.indexOf(b.color); }); }
+  function printPick(p) {
+    var el = document.createElement('div');
+    el.innerHTML = pickSheet(pickTitle(p), pickRows(p).map(function (n) { var l = p.lines[n.id]; return { n: n, qty: l.qty, note: esc(l.note || '') }; }));
+    printLabels([el.firstChild], 'A4P');
+  }
   function viewPick() {
     h('<h2>Pick list</h2><div class="note small">Paste today\'s self-ship orders (Easyship, Seller Flex, website): one line per order item, with the SKU (or size and color, e.g. "210x100 Black") and the quantity. Copying the SKU and Quantity columns from the Amazon order report works. The list comes back in walking order: AR → AL → BR → BL → CR → CL → DR → DL. It checks what is in the boxes on the racks, because pickers never pick from the top.</div>' +
       '<div id="pOpen"></div>' +
-      '<textarea id="pIn" rows="8" style="width:100%;font-family:var(--f-mono);padding:8px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink)" placeholder="MQDR-210x100-BK\t2&#10;MQ-DR-205x90-GR\t1&#10;200x100 Brown 1"></textarea>' +
+      '<h3>New pick list</h3><textarea id="pIn" rows="8" style="width:100%;font-family:var(--f-mono);padding:8px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink)" placeholder="MQDR-210x100-BK\t2&#10;MQ-DR-205x90-GR\t1&#10;200x100 Brown 1"></textarea>' +
       '<div class="row"><button class="btn primary" id="pGo">Make pick list</button><button class="btn" id="pPrint" hidden>Print</button></div><div id="pOut"></div><div id="pFinal"></div>');
     var lastNode = null, made = null;
-    // owner 22 Nov 2026: pickers pick only from the boxes on the racks, never from the top. So the list compares with the pick box
-    // (plus the backup boxes for 210x100), not with the total. A short line gets a warning and a choice; it never blocks the list.
-    function rackOf(n) {
-      var pick = counted(n.pick, n.id), bk = (n.backups || []).reduce(function (a, c) { return a + counted(c, n.id); }, 0);
-      return { pick: pick, backup: bk, rack: pick + bk, known: homeOf(n).some(function (c) { return !!S.shelf[countKey(c, n.id)]; }), top: topOf(n.id) };
-    }
     function lineQty(x) { var c = made.choice[x.n.id]; return Math.max(0, Math.min(x.want, onHand(x.n.id), c === 'cut' ? x.r.rack : c === 'drop' ? 0 : x.want)); }
+    function noteText(x) { // what the Note column says for a line (plain text; saved with the list)
+      var c = made.choice[x.n.id], q = lineQty(x);
+      if (x.short) return c === 'drop' ? 'Removed' : c === 'cut' ? 'Cut to ' + q + ' (what is in the box)' : c === 'keep' ? 'Bring ' + Math.min(x.short, x.r.top.q) + ' down from the top first' : '';
+      if (x.want > x.r.pick && x.r.backup) return 'Pick box has ' + x.r.pick + ': swap a backup box down, or pick from it';
+      return '';
+    }
     function drawList() {
       var rows = made.rows.map(function (n) { var r = rackOf(n), want = made.tot[n.id]; return { n: n, want: want, r: r, short: Math.max(0, want - r.rack) }; });
-      var units = rows.reduce(function (a, x) { return a + x.want; }, 0), shorts = rows.filter(function (x) { return x.short; });
-      var html = '<div class="sheet"><h3>Pick list · ' + esc(new Date().toLocaleDateString()) + ' · ' + units + ' nets · picker ____________</h3><table><thead><tr><th>✓</th><th>Box</th><th>Net</th><th>Qty</th><th>In the box</th><th>Note</th></tr></thead><tbody>' +
-        rows.map(function (x) {
-          var n = x.n, c = made.choice[n.id], q = lineQty(x), note = '';
-          if (x.short) note = c === 'drop' ? 'Removed' : c === 'cut' ? 'Cut to ' + q + ' (what is in the box)' : c === 'keep' ? 'Bring ' + Math.min(x.short, x.r.top.q) + ' down from the top first' : '<b>' + x.short + ' short</b>';
-          else if (x.want > x.r.pick && x.r.backup) note = 'Pick box has ' + x.r.pick + ': swap a backup box down, or pick from it';
-          return '<tr' + (c === 'drop' && x.short ? ' class="pl-drop"' : '') + '><td>☐</td><td><b>' + esc(n.pick) + '</b>' + (x.r.backup ? '<br><small>backups ' + esc(n.backups.join(' ')) + '</small>' : '') + '</td><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><b>' + (x.short && c ? q : x.want) + '</b></td><td>' + x.r.rack + (x.r.backup ? ' <small>(' + x.r.pick + ' + ' + x.r.backup + ' backup)</small>' : '') + '</td><td>' + note + '</td></tr>';
-        }).join('') + '</tbody></table>' +
-        '<p class="small">Tap <b>OUT</b> on the scan station, type the size (or scan the shelf), tap the color and how many.</p></div>';
+      var shorts = rows.filter(function (x) { return x.short; });
+      var html = pickSheet('Pick list · not final yet · ' + whenText(now()), rows.map(function (x) {
+        var c = made.choice[x.n.id];
+        return { n: x.n, qty: x.short && c ? lineQty(x) : x.want, drop: c === 'drop' && x.short, note: x.short && !c ? '<b>' + x.short + ' short</b>' : esc(noteText(x)) };
+      }));
       var warn = shorts.length ? '<div class="card pl-short"><h3>' + shorts.length + ' line' + (shorts.length > 1 ? 's are' : ' is') + ' short in the boxes ' + tipBtn('SHORT') + '</h3><div class="small">Pickers take nets only from the boxes on the racks. Choose for each line. You can still make the list final.</div>' +
         shorts.map(function (x) {
           var n = x.n, c = made.choice[n.id], top = x.r.top.q, stock = onHand(n.id);
@@ -1529,57 +1620,111 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       drawFinal(false);
     };
     document.getElementById('pPrint').onclick = function () { if (lastNode) printLabels([lastNode.cloneNode(true)], 'A4P'); };
-    // Final (managers): is the list complete? Then take all of it off stock now. Pickers' scans only tick it off.
+    // Final (managers): is the list complete? Yes = take all of it off stock now (pickers' scans only tick it off).
+    // No = keep stock as it is (pickers' OUT takes it off). Both make the list, with its number, ready to print.
     function drawFinal(ask) {
       var el = document.getElementById('pFinal'); if (!el) return;
       if (!made || !can('Manager')) { el.innerHTML = ''; return; }
       var lines = made.rows.map(function (n) { var r = rackOf(n), want = made.tot[n.id], x = { n: n, want: want, r: r, short: Math.max(0, want - r.rack) }; x.q = lineQty(x); return x; });
       var open = lines.filter(function (x) { return x.short && !made.choice[x.n.id]; });
       var units = lines.reduce(function (a, x) { return a + x.q; }, 0), short = lines.filter(function (x) { return x.q < x.want && made.choice[x.n.id] !== 'drop' && made.choice[x.n.id] !== 'cut'; });
-      el.innerHTML = !ask ? '<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div class="small">Is this the whole list for today?</div><div class="row" style="align-items:center"><button class="btn primary" id="pFin">Final</button>' + tipBtn('FINAL') + '</div></div><div class="small" id="pMsg"></div></div>'
-        : '<div class="card final-ask"><h3>Remove all these nets from stock now?</h3><div class="small"><b>' + units + '</b> nets of ' + lines.filter(function (x) { return x.q; }).length + ' kinds come off stock in one go. Pickers then tap <b>OUT</b> as usual: for these nets it only ticks the list, it does not take them off stock again.</div>' +
-          (short.length ? '<div class="small"><b>Not enough in stock:</b> ' + short.map(function (x) { return esc(netLabel(x.n)) + ' only ' + x.q + ' of ' + x.want; }).join(', ') + '. Only what is in stock comes off.</div>' : '') +
-          '<div class="row"><button class="btn primary" id="pYes"' + (units ? '' : ' disabled') + '>Yes, remove from stock</button><button class="btn" id="pNo">Not now</button></div><div class="small" id="pMsg"></div></div>';
+      el.innerHTML = !ask ? '<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div class="small">Is this the whole list?</div><div class="row" style="align-items:center"><button class="btn primary" id="pFin">Final</button>' + tipBtn('FINAL') + '</div></div><div class="small" id="pMsg"></div></div>'
+        : '<div class="card final-ask"><h3>Remove all these nets from stock now?</h3><div class="small"><b>' + units + '</b> nets of ' + lines.filter(function (x) { return x.q; }).length + ' kinds. <b>Yes:</b> they come off stock now, in one go; pickers then tap <b>OUT</b> as usual and it only ticks the list. <b>No:</b> stock stays as it is; it comes off when pickers tap <b>OUT</b>. Either way the list is saved as <b>Pick list #' + nextPickNo() + '</b>, ready to print.</div>' +
+          (short.length ? '<div class="small"><b>Not enough in stock:</b> ' + short.map(function (x) { return esc(netLabel(x.n)) + ' only ' + x.q + ' of ' + x.want; }).join(', ') + '. Only what is in stock goes on the list.</div>' : '') +
+          '<div class="row"><button class="btn primary" id="pYes"' + (units ? '' : ' disabled') + '>Yes, remove from stock</button><button class="btn" id="pKeep"' + (units ? '' : ' disabled') + '>No, don\'t remove</button><button class="btn" id="pNo">Back</button></div><div class="small" id="pMsg"></div></div>';
       var f = document.getElementById('pFin'); if (f) f.onclick = function () {
         if (open.length) { document.getElementById('pMsg').innerHTML = '<b>' + open.length + ' short line' + (open.length > 1 ? 's' : '') + ':</b> choose Keep, Cut or Remove for ' + (open.length > 1 ? 'each' : 'it') + ' above first.'; var w = document.querySelector('.pl-short'); if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
         drawFinal(true);
       };
       var no = document.getElementById('pNo'); if (no) no.onclick = function () { drawFinal(false); };
-      var yes = document.getElementById('pYes'); if (yes) yes.onclick = function () {
-        if (sheetOn() && (S.sheetV || 0) < PICK_V) { document.getElementById('pMsg').textContent = 'Needs the Google Sheet script version ' + PICK_V + '. Paste the new google-sheet/Code.gs and deploy it first.'; return; }
-        yes.disabled = true;
+      function finalize(off, btn) {
+        var need = off ? PICK_V : PICK2_V;
+        if (sheetOn() && (S.sheetV || 0) < need) { document.getElementById('pMsg').textContent = 'Needs the Google Sheet script version ' + need + '. Paste the new google-sheet/Code.gs and deploy it first.'; return; }
+        btn.disabled = true;
         var d = new Date(), id = 'PL-' + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + '-' + Math.random().toString(36).slice(2, 4).toUpperCase();
-        var use = lines.filter(function (x) { return x.q > 0; }), p = { id: id, created: now(), by: sess.emp, state: 'open', lines: {} };
-        use.forEach(function (x) { S.stock[x.n.id] = onHand(x.n.id) - x.q; p.lines[x.n.id] = { qty: x.q, picked: 0 }; });
+        var use = lines.filter(function (x) { return x.q > 0; }), no = nextPickNo(), p = { id: id, no: no, created: now(), by: sess.emp, state: 'open', off: off, boxed: off && (!sheetOn() || (S.sheetV || 0) >= PICK2_V), lines: {} };
+        use.forEach(function (x) {
+          var from = p.boxed ? takeFromBoxes(x.n, x.q) : [];
+          if (off) { S.stock[x.n.id] = onHand(x.n.id) - x.q; from.forEach(function (f) { shelfAdd(f[0], x.n.id, -f[1], true); }); }
+          p.lines[x.n.id] = { qty: x.q, picked: 0, note: noteText(x), from: from };
+        });
         S.picks = S.picks || {}; S.picks[id] = p;
-        addLog({ type: 'PICKLIST', who: sess.emp, list: id, lines: use.map(function (x) { return { net: x.n.id, netName: netLabel(x.n), qty: x.q }; }), qty: units, note: 'Pick list ' + id + ' final: ' + units + ' nets off stock' });
-        save(); made = null; document.getElementById('pIn').value = ''; document.getElementById('pOut').innerHTML = ''; document.getElementById('pPrint').hidden = true; lastNode = null;
-        toast('Pick list final: ' + units + ' nets taken off stock.'); viewPick();
-      };
+        addLog({ type: 'PICKLIST', who: sess.emp, list: id, no: no, keep: !off, boxes: p.boxed, lines: use.map(function (x) { return { net: x.n.id, netName: netLabel(x.n), qty: x.q, note: p.lines[x.n.id].note, from: p.lines[x.n.id].from }; }), qty: units,
+          note: 'Pick list #' + no + ' (' + id + ') final: ' + units + ' nets' + (off ? ' off stock' : ', stock not changed') });
+        save(); made = null; lastNode = null;
+        toast('Pick list #' + no + ' made: ' + units + ' nets' + (off ? ' taken off stock.' : '. Stock not changed.')); viewPick();
+      }
+      var yes = document.getElementById('pYes'); if (yes) yes.onclick = function () { finalize(true, yes); };
+      var keep = document.getElementById('pKeep'); if (keep) keep.onclick = function () { finalize(false, keep); };
     }
     drawOpen();
   }
-  // open pick lists: what is picked, what is left. Managers can send nets that were not picked back to stock.
+  // the lists: today's, plus any older one not picked yet. Print any of them again; picker taps Picking done; manager can undo Final.
+  function shownPicks() { return allPicks().filter(function (p) { return isToday(p.created) || p.state !== 'done'; }).reverse(); }
+  function pickSum(p) {
+    var ids = pickRows(p), all = ids.reduce(function (a, n) { return a + p.lines[n.id].qty; }, 0), got = ids.reduce(function (a, n) { return a + Math.min(p.lines[n.id].picked, p.lines[n.id].qty); }, 0);
+    var short = ids.filter(function (n) { return p.lines[n.id].picked < p.lines[n.id].qty; }).map(function (n) { return netLabel(n) + ' ' + (p.lines[n.id].qty - p.lines[n.id].picked); });
+    return { ids: ids, all: all, got: got, short: short };
+  }
+  function doneLine(p) { // the picked confirmation, for information only: no number changes
+    var m = pickSum(p);
+    if (!p.doneBy) return '<span class="muted">Picking not confirmed yet.</span>';
+    return '<b>✓ Picked</b> by ' + esc(wname(p.doneBy)) + ' at ' + esc(whenText(p.doneAt || p.created)) + (p.doneShort && p.doneShort.length ? ' · <b>short:</b> ' + esc(p.doneShort.join(', ')) : m.short.length ? ' · <b>short:</b> ' + esc(m.short.join(', ')) : ' · all ' + m.all + ' nets');
+  }
   function drawOpen() {
     var el = document.getElementById('pOpen'); if (!el) return;
-    var lists = Object.keys(S.picks || {}).map(function (k) { return S.picks[k]; }).filter(function (p) { return p.state !== 'done' || isToday(p.created); }).sort(function (a, b) { return (a.created || '') < (b.created || '') ? 1 : -1; });
+    var lists = shownPicks(), v11 = !sheetOn() || (S.sheetV || 0) >= PICK2_V;
     if (!lists.length) { el.innerHTML = ''; return; }
-    el.innerHTML = lists.map(function (p) {
-      var ids = Object.keys(p.lines).map(function (id) { return BY_ID[id]; }).filter(Boolean).sort(function (a, b) { return sideOrder(a.pick, b.pick) || COLORS.indexOf(a.color) - COLORS.indexOf(b.color); });
-      var all = ids.reduce(function (a, n) { return a + p.lines[n.id].qty; }, 0), got = ids.reduce(function (a, n) { return a + Math.min(p.lines[n.id].picked, p.lines[n.id].qty); }, 0);
-      return '<div class="card pl-card" data-pl="' + esc(p.id) + '"><div class="row" style="justify-content:space-between;align-items:center"><h3>' + esc(p.id) + ' · ' + (p.state === 'done' ? 'all picked' : got + ' of ' + all + ' picked') + '</h3><span class="small muted">final ' + esc(fmtT(p.created)) + ' · off stock</span></div>' +
-        '<div class="tablewrap"><table><thead><tr><th>Box</th><th>Net</th><th>To pick</th><th>Picked</th><th>Left</th>' + (can('Manager') ? '<th></th>' : '') + '</tr></thead><tbody>' +
-        ids.map(function (n) { var l = p.lines[n.id], left = Math.max(0, l.qty - l.picked);
+    el.innerHTML = '<h3>Pick lists</h3>' + lists.map(function (p) {
+      var m = pickSum(p), mgr = can('Manager');
+      return '<div class="card pl-card" data-pl="' + esc(p.id) + '"><div class="row" style="justify-content:space-between;align-items:center"><h3>' + esc(pickTitle(p)) + ' · ' + (p.state === 'done' ? 'all picked' : m.got + ' of ' + m.all + ' picked') + '</h3>' +
+        '<span class="small muted">' + (p.off === false ? 'stock comes off when picked' : 'off stock at Final') + (p.by ? ' · ' + esc(wname(p.by)) : '') + '</span></div>' +
+        '<div class="small pl-done">' + doneLine(p) + '</div>' +
+        '<div class="row pl-acts"><button class="btn" data-plprint="' + esc(p.id) + '">Print</button>' +
+        (!p.doneBy && v11 ? '<button class="btn primary" data-pldone="' + esc(p.id) + '">Picking done</button>' : '') +
+        (mgr && v11 && !m.got ? '<button class="btn" data-plundo="' + esc(p.id) + '">Undo Final</button>' : '') + '</div>' +
+        '<details' + (p.state === 'done' ? '' : ' open') + '><summary class="small">Lines</summary><div class="tablewrap"><table><thead><tr><th>Box</th><th>Net</th><th>To pick</th><th>Picked</th><th>Left</th>' + (mgr ? '<th></th>' : '') + '</tr></thead><tbody>' +
+        m.ids.map(function (n) { var l = p.lines[n.id], left = Math.max(0, l.qty - l.picked);
           return '<tr' + (left ? '' : ' class="muted"') + '><td><b>' + esc(n.pick) + '</b></td><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td>' + l.qty + '</td><td>' + l.picked + '</td><td><b>' + (left || '✓') + '</b></td>' +
-            (can('Manager') ? '<td>' + (left ? '<button class="btn" data-plback="' + esc(p.id) + '|' + n.id + '">Not picked…</button>' : '') + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div><div class="small" data-plmsg="' + esc(p.id) + '"></div></div>';
-    }).join('');
+            (mgr ? '<td>' + (left ? '<button class="btn" data-plback="' + esc(p.id) + '|' + n.id + '">Not picked…</button>' : '') + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div></details><div class="small" data-plmsg="' + esc(p.id) + '"></div></div>';
+    }).join('') + '<hr>';
+    function msgOf(id) { return el.querySelector('[data-plmsg="' + id + '"]'); }
+    el.querySelectorAll('[data-plprint]').forEach(function (b) { b.onclick = function () { printPick(S.picks[b.dataset.plprint]); }; });
+    el.querySelectorAll('[data-pldone]').forEach(function (b) { b.onclick = function () {
+      var p = S.picks[b.dataset.pldone], m = pickSum(p), msg = msgOf(p.id);
+      var go = function () {
+        p.doneBy = sess.emp; p.doneAt = now(); p.doneShort = m.short;
+        addLog({ type: 'PICKDONE', who: sess.emp, list: p.id, qty: m.got, short: m.short, note: pickTitle(p) + ' picked: ' + m.got + ' of ' + m.all + (m.short.length ? ' · short: ' + m.short.join(', ') : '') });
+        save(); toast(pickTitle(p) + ': picking done. The manager can see it.'); drawOpen();
+      };
+      if (!m.short.length) { go(); return; }
+      msg.innerHTML = '<div class="cfm light"><div class="cfm-what"><b>' + (m.all - m.got) + '</b> not picked yet: ' + esc(m.short.join(', ')) + '. Tell the manager. Done anyway?</div><div class="cfm-b"><button type="button" class="btn primary" data-plyes="1">Yes, done</button><button type="button" class="btn" data-plyes="0">Back</button></div></div>';
+      msg.querySelectorAll('[data-plyes]').forEach(function (y) { y.onclick = function () { if (y.dataset.plyes === '1') go(); else msg.innerHTML = ''; }; });
+    }; });
+    el.querySelectorAll('[data-plundo]').forEach(function (b) { b.onclick = function () {
+      var p = S.picks[b.dataset.plundo], m = pickSum(p), msg = msgOf(p.id);
+      if (m.got > 0) { msg.innerHTML = '<b>Pickers have already picked ' + m.got + ' from this list</b>, so it cannot be undone. Use <b>Not picked…</b> on a line, or make a new list for anything extra.'; return; }
+      msg.innerHTML = '<div class="cfm light"><div class="cfm-what">Undo ' + esc(pickTitle(p)) + '? ' + (p.off === false ? 'Stock was not changed by it.' : 'Its <b>' + m.all + '</b> nets go back into stock.') + ' The list comes back below so you can change it and press Final again.</div><div class="cfm-b"><button type="button" class="btn primary" data-plyes="1">Yes, undo Final</button><button type="button" class="btn" data-plyes="0">Back</button></div></div>';
+      msg.querySelectorAll('[data-plyes]').forEach(function (y) { y.onclick = function () {
+        if (y.dataset.plyes !== '1') { msg.innerHTML = ''; return; }
+        var text = m.ids.map(function (n) { return n.size + ' ' + n.color + ' ' + p.lines[n.id].qty; }).join('\n');
+        if (p.off !== false) m.ids.forEach(function (n) { S.stock[n.id] = onHand(n.id) + p.lines[n.id].qty; (p.boxed ? p.lines[n.id].from || [] : []).forEach(function (f) { shelfAdd(f[0], n.id, f[1]); }); });
+        addLog({ type: 'PICKUNDO', who: sess.emp, list: p.id, keep: p.off === false, lines: m.ids.map(function (n) { return { net: n.id, qty: p.lines[n.id].qty }; }), qty: m.all, note: pickTitle(p) + ': Final undone' + (p.off === false ? '' : ', ' + m.all + ' nets back to stock') });
+        delete S.picks[p.id]; S.undo = null; save();
+        toast(pickTitle(p) + ' undone.' + (p.off === false ? '' : ' ' + m.all + ' nets back in stock.'));
+        viewPick(); document.getElementById('pIn').value = text; document.getElementById('pGo').click();
+        var f = document.getElementById('pIn'); if (f.scrollIntoView) f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }; });
+    }; });
     el.querySelectorAll('[data-plback]').forEach(function (b) { b.onclick = function () {
-      var k = b.dataset.plback.split('|'), p = S.picks[k[0]], n = BY_ID[k[1]], l = p.lines[n.id], left = Math.max(0, l.qty - l.picked), td = b.parentNode;
-      td.innerHTML = '<div class="pl-back"><button class="btn primary" data-plgo="1">Back to stock (' + left + ')</button><button class="btn" data-plgo="0">Not on the shelf</button></div>';
+      var k = b.dataset.plback.split('|'), p = S.picks[k[0]], n = BY_ID[k[1]], l = p.lines[n.id], left = Math.max(0, l.qty - l.picked), td = b.parentNode, kept = p.off === false;
+      td.innerHTML = '<div class="pl-back">' + (kept ? '<button class="btn primary" data-plgo="0">Take off the list (' + left + ')</button>' : '<button class="btn primary" data-plgo="1">Back to stock (' + left + ')</button><button class="btn" data-plgo="0">Not on the shelf</button>') + '</div>';
       td.querySelectorAll('[data-plgo]').forEach(function (g) { g.onclick = function () {
         var restock = g.dataset.plgo === '1';
+        var back = restock && p.boxed ? ((l.from || [])[0] || [n.pick])[0] : '';
         l.qty -= left; pickTick(p.id, n.id, 0); if (restock) S.stock[n.id] = onHand(n.id) + left;
-        addLog({ type: 'PICKBACK', who: sess.emp, list: p.id, net: n.id, qty: left, restock: restock, note: 'Pick list ' + p.id + ': ' + left + ' not picked · ' + (restock ? 'back to stock' : 'not on the shelf, stays off stock') });
+        if (back) shelfAdd(back, n.id, left);
+        addLog({ type: 'PICKBACK', who: sess.emp, list: p.id, net: n.id, qty: left, restock: restock, backTo: back, note: pickTitle(p) + ': ' + left + ' not picked · ' + (kept ? 'off the list, stock not changed' : restock ? 'back to stock' : 'not on the shelf, stays off stock') });
         S.undo = null; save(); toast(netLabel(n) + ': ' + left + (restock ? ' back to stock.' : ' taken off the list.')); drawOpen();
       }; });
     }; });
@@ -1621,7 +1766,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
         el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true"><div class="pop-h"><div class="pop-net">' + esc(code) + '</div><div class="small">' + esc(locHint(code)) + '. No net here.</div></div><button type="button" class="btn dark pop-x" data-popx="1">Close</button></div>';
         el.hidden = false; document.body.classList.add('pop-on'); return;
       }
-      var t = topOf(n.id), boxesIn = inBoxes(n.id), left = pickLeft(n.id), nb = onHand(n.id) - boxesIn - t.q + left, rows = '';
+      var t = topOf(n.id), boxesIn = inBoxes(n.id), left = pickLeft(n.id) - boxedLeft(n.id), nb = onHand(n.id) - boxesIn - t.q + left, rows = '';
       homeOf(n).forEach(function (c) {
         var known = !!S.shelf[countKey(c, n.id)], b = BOXES[c];
         rows += '<div class="pl' + (c === code ? ' here' : '') + '"><span>' + (b.role === 'pick' ? 'Pick box' : 'Backup box') + ' <code>' + esc(c) + '</code>' + (c === code ? ' <em>this box</em>' : '') + '<small>' + (isEmpty(c) ? 'marked empty · ' : '') + 'a full box holds ' + boxCap(c, n.id) + '</small></span><b>' + (known ? counted(c, n.id) : '—') + '</b></div>';
@@ -2057,7 +2202,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (Array.isArray(d.shelf)) { S.shelf = {}; d.shelf.forEach(function (c) { if (c.box && c.net) S.shelf[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by, parts: c.parts || undefined }; }); }
     S.resetAt = d.resetAt || S.resetAt || '';
     if (Array.isArray(d.snaps)) S.snaps = d.snaps;
-    if (Array.isArray(d.picks)) { S.picks = {}; d.picks.forEach(function (x) { var p = S.picks[x.list] = S.picks[x.list] || { id: x.list, created: x.created, by: x.by, state: x.state, lines: {} }; p.lines[x.net] = { qty: Number(x.qty) || 0, picked: Number(x.picked) || 0 }; if (x.state !== 'done') p.state = 'open'; }); }
+    if (Array.isArray(d.picks)) { S.picks = {}; d.picks.forEach(function (x) { if (x.state === 'undone') return; var p = S.picks[x.list] = S.picks[x.list] || { id: x.list, no: Number(x.no) || 0, created: x.created, by: x.by, state: x.state, off: !x.keep, boxed: !!x.boxed, doneBy: x.doneBy || '', doneAt: x.doneAt || '', lines: {} }; p.lines[x.net] = { qty: Number(x.qty) || 0, picked: Number(x.picked) || 0, note: x.note || '', from: x.from || [] }; if (x.state !== 'done') p.state = 'open'; }); }
     S.outToday = d.outToday && typeof d.outToday === 'object' ? d.outToday : null; S.outAt = d.at || now();
     if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by, parts: c.parts || undefined }; }); }
     S.sheetV = Number(d.v) || 0;

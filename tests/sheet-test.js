@@ -68,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 10 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 11 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -126,7 +126,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 10', state().v === 10);
+expect('doGet says version 11', state().v === 11);
 expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
 expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
   sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
@@ -250,6 +250,41 @@ s = state();
 expect('nets not picked go back to stock and off the list; the list is done', s.stock[PK2] === pk20 - 2 && s.picks.filter((x) => x.list === 'PL-1').every((x) => x.state === 'done') && s.picks.find((x) => x.net === PK2).qty === 2);
 post([{ id: 'pl2', type: 'PICKLIST', list: 'PL-2', lines: [{ net: PK, qty: 1 }] }, { id: 'pb2', type: 'PICKBACK', list: 'PL-2', net: PK, qty: 1, restock: false }]);
 expect('not on the shelf: off the list, stock stays down', state().stock[PK] === pk0 - 4 && state().picks.find((x) => x.list === 'PL-2').state === 'done');
+
+// ---- pick lists version 11: numbers per day, Final also off the boxes, "don't remove", undo Final, picking done ----
+const PQ = 'DN-205x90-BR', PQB = 'CR-C2-R3', PQ2 = 'DN-205x90-BK';
+post([{ type: 'BOXADD', loc: PQB, net: PQ, qty: 6 }, { type: 'BOXADD', loc: 'TOP', net: PQ, qty: 25 }, { type: 'BOXADD', loc: 'CR-C1-R3', net: PQ2, qty: 4 }]);
+const pq0 = state().stock[PQ], pq20 = state().stock[PQ2];
+post([{ id: 'pl3', type: 'PICKLIST', list: 'PL-3', boxes: true, t: new Date().toISOString(), t: new Date().toISOString(), lines: [{ net: PQ, qty: 8, note: 'Bring 2 down from the top first', from: [[PQB, 6], ['TOP', 2]] }] }]);
+s = state();
+const l3 = s.picks.find((x) => x.list === 'PL-3');
+expect('Yes: off stock AND off the boxes at Final (6 from the box, 2 from the top)', s.stock[PQ] === pq0 - 8 && inb(PQB, PQ) === 0 && inb('TOP', PQ) === 23 && l3.boxed && l3.from.length === 2);
+expect('lists get a number for the day (#2 after PL-1 today) and keep their note', l3.no === 2 && l3.note === 'Bring 2 down from the top first');
+post([{ id: 'pk4', type: 'PICKED', list: 'PL-3', net: PQ, qty: 1 }]);
+expect('a pick of a list that is already off the box only ticks it', inb(PQB, PQ) === 0 && state().stock[PQ] === pq0 - 8 && state().picks.find((x) => x.list === 'PL-3').picked === 1);
+post([{ id: 'pu1', type: 'PICKUNDO', list: 'PL-3' }]);
+expect('undo Final refused once something was picked', state().stock[PQ] === pq0 - 8 && state().picks.some((x) => x.list === 'PL-3'));
+post([{ id: 'pk4u', type: 'UNDO', undoes: 'pk4', reason: 'Wrong number', net: PQ, stock: {}, picks: { ['PL-3|' + PQ]: -1 } }]);
+r = call({ t: login('EMP-07', '5555').token, events: [{ id: 'puw', type: 'PICKUNDO', list: 'PL-3', t: new Date().toISOString() }] });
+expect('a worker cannot undo Final', r.refused.length === 1);
+post([{ id: 'pu2', type: 'PICKUNDO', list: 'PL-3' }]);
+s = state();
+expect('manager undoes Final: stock back, nets back in the box and on top, list gone from the read', s.stock[PQ] === pq0 && inb(PQB, PQ) === 6 && inb('TOP', PQ) === 25 && !s.picks.some((x) => x.list === 'PL-3') && !s.outToday[PQ]);
+post([{ id: 'pl4', type: 'PICKLIST', list: 'PL-4', boxes: true, t: new Date().toISOString(), lines: [{ net: PQ, qty: 1, from: [[PQB, 1]] }] }]);
+expect('after an undo the next list takes the free number again (#2)', state().picks.find((x) => x.list === 'PL-4').no === 2);
+post([{ id: 'pb4', type: 'PICKBACK', list: 'PL-4', net: PQ, qty: 1, restock: true, backTo: PQB }]);
+expect('not picked, back to stock: back in its box too', state().stock[PQ] === pq0 && inb(PQB, PQ) === 6);
+post([{ id: 'pl5', type: 'PICKLIST', list: 'PL-5', keep: true, t: new Date().toISOString(), lines: [{ net: PQ2, qty: 2 }] }]);
+s = state();
+const l5 = s.picks.find((x) => x.list === 'PL-5');
+expect("No, don't remove: the list is made and numbered, stock and box stay", l5 && l5.keep && l5.no === 3 && s.stock[PQ2] === pq20 && inb('CR-C1-R3', PQ2) === 4 && !s.outToday[PQ2]);
+post([{ id: 'po5', type: 'OUT', net: PQ2, qty: 2, loc: 'CR-C1-R3' }, { id: 'pk5', type: 'PICKED', list: 'PL-5', net: PQ2, qty: 2 }]);
+s = state();
+expect('on a kept list the OUT takes it off stock and the box, and ticks the list', s.stock[PQ2] === pq20 - 2 && inb('CR-C1-R3', PQ2) === 2 && s.picks.find((x) => x.list === 'PL-5').state === 'done');
+const st5 = JSON.stringify([s.stock, s.shelf]);
+post([{ id: 'pd5', type: 'PICKDONE', list: 'PL-5', qty: 2, short: [] }]);
+s = state();
+expect('picking done: who and when on the list, no number changes', s.picks.find((x) => x.list === 'PL-5').doneBy === 'Test Picker' && !!s.picks.find((x) => x.list === 'PL-5').doneAt && JSON.stringify([s.stock, s.shelf]) === st5);
 
 // ---- top of the racks as full boxes and part boxes (version 10) ----
 const TN = 'DN-205x95-GR';

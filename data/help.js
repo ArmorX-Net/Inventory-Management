@@ -114,16 +114,24 @@ window.HELP_QA = [
     a: 'It lists the empty boxes to fill from the top of the racks (oldest batch first), and the nets that are low in total and need to be made.' },
   { t: 'Stock and dashboard', q: 'How do I make a pick list?', k: 'pick list orders paste easyship seller flex walking order',
     a: 'Pick list page: paste the day\'s orders (SKU or size and color, and quantity), tap <b>Make pick list</b>. It comes back in walking order with the box for each line and how many are in that box. Tap Print if you want it on paper.' },
+  { t: 'Stock and dashboard', q: 'How do I print a pick list again?', k: 'pick list print again reprint number many lists day time',
+    a: 'Every list made with <b>Final</b> gets a number for the day and its time, like <b>Pick list #3 · 23 Nov · 2:15 PM</b>. Many lists a day is fine. They all show at the top of the Pick list page: tap <b>Print</b> on any of them, any time. The number is on the printout.' },
+  { t: 'Stock and dashboard', q: 'How does the picker say the list is picked?', k: 'pick list picked done confirm picker notify manager finished',
+    a: 'The picker takes the nets with <b>OUT</b> as usual: each one ticks the list. When finished, open the Pick list page and tap <b>Picking done</b> on that list. If some are not picked, the app says which, so tell the manager. The manager sees who picked it, when, and what is short, on the Pick list page and the Dashboard. No number changes.' },
+  { t: 'Stock and dashboard', q: 'How do I undo Final on a pick list?', k: 'pick list undo final mistake add size change list',
+    a: 'Managers: on the Pick list page tap <b>Undo Final</b> on that list, then <b>Yes</b>. Its nets go back into stock and the list comes back to change: add or remove lines, then tap <b>Final</b> again. Only before anything is picked from it. After picking has started, use <b>Not picked…</b> on a line, or make a new list for anything extra.' },
   { t: 'Stock and dashboard', q: 'Why is a pick list line "short"?', k: 'pick list short not enough box top bring down keep cut remove warning',
     a: 'Pickers take nets only from the boxes on the racks, never from the top. So the list compares each line with the <b>pick box</b> (for 210x100 also its backup boxes). If the box has fewer, the line is <b>short</b> and the app says how many are on top. Choose for each short line:<ul><li><b>Keep</b>: keep the full number; bring the rest down from the top first.</li><li><b>Cut to</b> the number in the box.</li><li><b>Remove line</b>: take it off this list and check it later.</li></ul>Then tap <b>Final</b> as usual.' },
   { t: 'Stock and dashboard', q: 'What does Final on the pick list do?', k: 'pick list final remove stock once picker check tick not picked back to stock short',
-    a: 'Managers: when the list is complete, tap <b>Final</b>, then <b>Yes, remove from stock</b>. All its nets come off stock in one go. Pickers then tap <b>OUT</b> as usual: for nets on the list it only ticks them off and takes them off the box, never off stock twice. The Pick list page shows what is picked and what is left. A net not picked: tap <b>Not picked…</b>, then <b>Back to stock</b> (still on the shelf, or the order was cancelled) or <b>Not on the shelf</b> (it stays off stock).<br>A <b>short</b> line (fewer in the box than on the list) needs a choice first: Keep, Cut or Remove.' },
+    a: 'Managers: when the list is complete, tap <b>Final</b>. Both answers save the list with its number, ready to print. <b>Yes, remove from stock</b>: all its nets come off stock in one go. <b>No, don\'t remove</b>: stock stays as it is and comes off when pickers tap OUT, which also ticks the list. Pickers then tap <b>OUT</b> as usual: for nets on the list it only ticks them off and takes them off the box, never off stock twice. The Pick list page shows what is picked and what is left. A net not picked: tap <b>Not picked…</b>, then <b>Back to stock</b> (still on the shelf, or the order was cancelled) or <b>Not on the shelf</b> (it stays off stock).<br>A <b>short</b> line (fewer in the box than on the list) needs a choice first: Keep, Cut or Remove.' },
   { t: 'Stock and dashboard', q: 'Is there a backup of the data?', k: 'snapshot backup restore reset zero daily',
     a: 'Yes. A copy is saved every night at 23:00 (kept 30 days), and before every reset or restore. Admins can restore one on the Settings page. Reset to zero is for the Owner only.' },
 
   // ---- printing ----
   { t: 'Printing', q: 'Where do I print labels and signs?', k: 'print labels setup shelf badge command sheet side sign rack layout thermal',
-    a: '<b>Setup labels</b> page: worker badges, the command sheet (with the TOP label), side signs (big or small), the rack layout sheet and shelf labels. Shelf labels show the size and color of the net in big letters with the box code small underneath: stick one on the shelf and one on the front of the box. Shelf labels, badges and command labels are 50 x 25 mm thermal labels. Batch labels print from <b>Batches &amp; labels</b>. Everything prints solid black.' },
+    a: '<b>Setup labels</b> page: worker badges, the command sheet (with the TOP label), side signs (big or small), the rack layout sheet and shelf labels. Shelf labels show the size and color of the net in big letters with the box code small underneath: stick one on the shelf and one on the front of the box. Batch labels print from <b>Batches &amp; labels</b>. Everything prints solid black.' },
+  { t: 'Printing', q: 'Small or Large label?', k: 'label size small large 50 25 4x6 101.6 152.4 thermal tiny header footer date address print',
+    a: 'Every label print asks which labels are in the thermal printer: <b>Small</b> 50 x 25 mm or <b>Large</b> 101.6 x 152.4 mm (4 x 6 inch). Pick the one in the printer and the label fills it, one label per page. In the print window: the same paper size, margins <b>None</b>, scale 100, and untick <b>Headers and footers</b> (that is what prints the date and web address on the label). A tiny label in the middle of a big one means Small was picked with the large roll in the printer.' },
   { t: 'Printing', q: 'How do I print this cheat sheet?', k: 'cheat sheet print handbook guide pdf',
     a: 'On this Help page tap <b>Print cheat sheet</b> (one A4 page). To keep a PDF, choose "Save as PDF" in the print window.' },
 
@@ -184,9 +192,9 @@ window.HELP_SHEET = [
     ['Scan station', 'IN and OUT. Managers: Box recount.'],
     ['Rack map', 'Every box. Tap one for its summary. Find a size.'],
     ['Refill list', 'Empty boxes to fill, nets running low.'],
-    ['Pick list', 'Paste orders. Checks the boxes. Final takes it all off stock; OUT then only ticks it.'],
+    ['Pick list', 'Paste orders. Final makes a numbered list (#1, #2 ...): Yes takes it off stock, No leaves stock. Print any list again. Picker taps Picking done.'],
     ['Stock', 'Totals, box recount Apply, Excel download and upload.'],
-    ['Setup labels', 'Badges, command sheet, side signs, rack layout, shelf labels.'],
+    ['Setup labels', 'Badges, command sheet, side signs, rack layout, shelf labels. Labels: Small 50x25 or Large 4x6.'],
     ['Help', 'Type a question or a box code or a size.'],
     ['SHEET · synced', 'All saved. "waiting" = still sending. OFFLINE = no internet, scans wait.'] ] }
 ];
@@ -220,9 +228,9 @@ window.HELP_TIPS = {
     ['What you type', 'The real number, and a reason. The line under it shows the change.'],
     ['What changes', 'The total of this net moves by the same difference. It is in the scan log with your reason.']] },
   FINAL: { h: 'Final (managers)', more: 'What does Final on the pick list do', lines: [
-    ['What it does', 'Takes the whole pick list off stock once.'],
-    ['What you do', 'Choose for every short line first, then Final and Yes.'],
-    ['What changes', 'Stock goes down now. Pickers\' OUT then only ticks the list.']] },
+    ['What it does', 'Saves the list with its number, ready to print.'],
+    ['What you do', 'Choose for every short line first, then Final, then Yes or No.'],
+    ['What changes', '<b>Yes</b>: stock goes down now; OUT only ticks the list. <b>No</b>: stock goes down at OUT.']] },
   SHORT: { h: 'Short in the box', more: 'Why is a pick list line short', lines: [
     ['Why', 'Pickers pick only from the boxes on the racks, never from the top.'],
     ['Keep', 'Keep the full number and bring the rest down from the top first.'],
