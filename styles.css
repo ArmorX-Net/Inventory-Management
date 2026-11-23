@@ -338,7 +338,7 @@ details.pv[open]>summary{margin-bottom:8px}
   #print-area .cheat h2{background:#000 !important;color:#fff !important}
 }
 .cheat tr:last-child td,.cheat tr:last-child th{border-bottom:.3mm solid #000}
-@media print{#print-area .cheat table{font-size:8.5pt;line-height:1.25}#print-area .cheat th{font-size:8.5pt}#print-area .cheat th,#print-area .cheat td{padding:.7mm 1.3mm}#print-area .cheat section{margin-bottom:2.5mm}}
+@media print{#print-area .cheat table{font-size:8pt;line-height:1.2}#print-area .cheat th{font-size:8pt}#print-area .cheat th,#print-area .cheat td{padding:.5mm 1.2mm}#print-area .cheat section{margin-bottom:2.5mm}}
 /* SHELF LABEL (owner 22 Nov 2026): size + colour in big bold letters, box code small underneath. Same label on the shelf and the box front. */
 .lbl-loc{justify-content:center}
 .lbl-loc .ll-net{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;line-height:1;white-space:nowrap;display:flex;justify-content:center;align-items:baseline;gap:1.5mm}
@@ -511,4 +511,38 @@ tr.odd td{background:var(--soft-warn)}
   #print-area.lbl-L .lbl-batch .t:last-child{flex-direction:column;align-items:center;gap:1mm}
   #print-area.lbl-L .lbl-badge .nm{font-size:44pt}
   #print-area.lbl-L .lbl-cmd .nm{font-size:38pt}
+}
+
+/* door work orders (owner 23 Nov 2026): one label per net, the scan shows only the next step */
+.wo-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end}
+.wo-form .btn{grid-column:1 / -1}
+#woPaste{width:100%;box-sizing:border-box;font-family:var(--f-mono);padding:8px;border:1px solid var(--line);border-radius:2px;background:var(--surface);color:var(--ink);margin:6px 0}
+.bad-row td{background:var(--soft-bad)}
+.wo-card .wo-code{font-family:var(--f-mono);font-weight:600;font-size:1.05rem;color:var(--tag);word-break:break-all}
+.wo-card .wo-now{color:#fff;font-size:1.05rem;line-height:1.3}
+.wo-card .small{color:#cfd6db}
+.act.wo-go{font-size:1.35rem;min-height:72px;background:var(--ok);border-color:var(--ok)}
+.act.wo-rej{border-color:var(--bad)}
+.wo-pl{align-self:flex-start;margin-top:4px}
+.wo-board{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.wo-col{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center;min-width:0}
+.wo-col.pile{border:2px solid var(--warn);background:var(--soft-warn)}
+.wo-cn{font-family:var(--f-display);font-weight:700;font-size:1.8rem;line-height:1}
+.wo-cs{font-weight:600;font-size:.9rem}
+@media (max-width:600px){.wo-board{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.wo-nets td,.wo-steps td{vertical-align:middle}
+.wo-act{white-space:nowrap}
+.wo-fixc{margin-top:10px}
+/* work order net label: Small 50 x 25 mm, Large 4 x 6 in. Size and colour big, barcode, code + date. Solid black. */
+.lbl-wo{width:50mm;height:25mm;padding:1mm 1.5mm;gap:.6mm;justify-content:center;align-items:center}
+.lbl-wo .wl-net{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;line-height:1;white-space:nowrap;display:flex;justify-content:center;align-items:baseline;gap:1.5mm}
+.lbl-wo .wl-size{font-size:17pt}
+.lbl-wo .wl-col{font-size:12pt}
+.lbl-wo .wl-code{font-family:Calibri,Carlito,Arial,sans-serif;font-weight:700;font-size:8pt;display:flex;justify-content:center;gap:3mm;line-height:1.1;white-space:nowrap}
+@media print{
+  #print-area .lbl-wo{padding:.6mm 1mm}
+  #print-area.lbl-L .lbl-wo .wl-net{flex-direction:column;align-items:center;gap:3mm;white-space:normal}
+  #print-area.lbl-L .lbl-wo .wl-size{font-size:64pt}
+  #print-area.lbl-L .lbl-wo .wl-col{font-size:40pt}
+  #print-area.lbl-L .lbl-wo .wl-code{font-size:20pt;flex-direction:column;align-items:center;gap:2mm}
 }

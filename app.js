@@ -307,10 +307,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function viewDashboard() {
     var total = 0, out = 0, low = 0;
     NETS.forEach(function (n) { var q = onHand(n.id); total += q; if (q <= 0) out++; else if (q <= n.refillAt) low++; });
-    var open = Object.values(S.batches).filter(function (b) { return b.stage < 6; });
-    var inProd = open.reduce(function (a, b) { return a + b.good; }, 0);
+    var open = woOpen(), inProd = open.reduce(function (a, o) { return a + Math.max(0, o.qty - o.racked - o.rejected); }, 0);
     var outToday = 0, inToday = 0;
-    S.log.forEach(function (e) { if (!isToday(e.t) || isUndone(e)) return; if (e.type === 'OUT' || e.type === 'FBA') outToday += e.qty; if (e.type === 'IN' || e.type === 'RETURN') inToday += e.qty; });
+    S.log.forEach(function (e) { if (!isToday(e.t) || isUndone(e)) return; if (e.type === 'OUT' || e.type === 'FBA') outToday += e.qty; if (e.type === 'IN' || e.type === 'RETURN' || e.type === 'WOIN') inToday += e.qty; });
     var cols = STAGES.map(function (s, i) {
       var items = Object.values(S.batches).filter(function (b) { return i < 6 ? b.stage === i : (b.stage === 6 && isToday(b.history[b.history.length - 1].t)); });
       return '<div class="col"><h4><span>' + (i < 6 ? esc(s) : 'Racked today') + '</span><span>' + items.length + '</span></h4>' +
@@ -323,17 +322,17 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       var st = status(n);
       return '<tr><td><span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) + '</td><td><code>' + esc(n.pick) + '</code></td><td>' + onHand(n.id) + '</td><td>' + (n.perDay || '—') + '</td><td><span class="pill ' + (st === 'out' ? 'p-bad">Out' : 'p-warn">Low') + '</span></td><td><button class="btn" data-make="' + n.id + '" data-qty="' + need + '">Make ' + need + '</button></td></tr>';
     }).join('');
-    var perWorker = {};
-    S.log.forEach(function (e) { if (!isToday(e.t) || e.type !== 'STAGE' || isUndone(e)) return; perWorker[e.who] = (perWorker[e.who] || 0) + e.qty; });
-    var wRows = S.workers.map(function (w) { return '<tr><td>' + esc(w.name) + '</td><td class="muted">' + esc(w.role) + '</td><td>' + (perWorker[w.id] || 0) + '</td></tr>'; }).join('');
-    h('<div class="row" style="justify-content:space-between;align-items:center"><h2>Today at a glance</h2><div class="row"><a class="btn primary" href="#batches">New batch label</a><a class="btn dark" href="#scan">Open scan station</a></div></div>' +
+    var perWorker = {}, today = woDaysAgo(0); // work order steps done today, per person (from the sheet)
+    (woState().daily || []).forEach(function (r) { if (r.day !== today || !r.done) return; var p = perWorker[r.who] = perWorker[r.who] || { name: r.name || wname(r.who), steps: {}, n: 0 }; p.steps[r.step] = (p.steps[r.step] || 0) + r.done; p.n += r.done; });
+    var wRows = Object.keys(perWorker).sort(function (a, b) { return perWorker[b].n - perWorker[a].n; }).map(function (id) { var p = perWorker[id]; return '<tr><td>' + esc(p.name) + '</td><td class="muted small">' + esc(Object.keys(p.steps).map(function (k) { return p.steps[k] + ' ' + k; }).join(', ')) + '</td><td>' + p.n + '</td></tr>'; }).join('') || '<tr><td colspan="3" class="muted">No work order steps done yet today.</td></tr>';
+    h('<div class="row" style="justify-content:space-between;align-items:center"><h2>Today at a glance</h2><div class="row"><a class="btn primary" href="#orders">New work order</a><a class="btn dark" href="#scan">Open scan station</a></div></div>' +
       '<div class="grid">' +
       kpi(total.toLocaleString(), 'Doornets on racks', '') + kpi(out, 'Nets out of stock', out ? 'bad' : 'ok') + kpi(low, 'Below refill level', low ? 'warn' : 'ok') +
-      kpi(open.length + ' · ' + inProd, 'Batches · nets in production', '') + kpi(inToday, 'In today (rack-in + returns)', '') + kpi(outToday, 'Out today (orders + FBA)', '') + '</div>' +
+      kpi(open.length + ' · ' + inProd, 'Work orders · nets in production', open.some(woLate) ? 'warn' : '') + kpi(inToday, 'In today (rack-in + returns)', '') + kpi(outToday, 'Out today (orders + FBA)', '') + '</div>' +
       countCard() + pickCard() +
-      '<div class="card"><h3>Production board</h3><div class="tablewrap" style="border:none"><div class="board">' + cols + '</div></div><div class="small muted">Each card is one batch label. It moves one column each time someone scans it.</div></div>' +
+      woBoard() + (Object.values(S.batches).some(function (b) { return b.stage < 6; }) ? '<div class="card"><h3>Older batch labels</h3><div class="tablewrap" style="border:none"><div class="board">' + cols + '</div></div></div>' : '') +
       '<div class="grid2"><div class="card"><h3>Needs attention</h3><div class="tablewrap"><table><thead><tr><th>Net</th><th>Rack</th><th>On hand</th><th>Sells/day</th><th></th><th></th></tr></thead><tbody>' + (lowRows || '<tr><td colspan="6" class="muted">Everything is above its refill level.</td></tr>') + '</tbody></table></div></div>' +
-      '<div class="card"><h3>Nets finished per person today</h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Step</th><th>Nets</th></tr></thead><tbody>' + wRows + '</tbody></table></div>' +
+      '<div class="card"><h3><a href="#production">Work order steps done today</a></h3><div class="tablewrap"><table><thead><tr><th>Name</th><th>Steps</th><th>Nets</th></tr></thead><tbody>' + wRows + '</tbody></table></div>' +
       '<h3>Last scans</h3><div class="tablewrap"><table><tbody>' + S.log.slice(0, 8).map(logRow).join('') + '</tbody></table></div></div></div>');
     app.querySelectorAll('[data-make]').forEach(function (b) { b.onclick = function () { location.hash = '#batches'; setTimeout(function () { prefill(b.dataset.make, b.dataset.qty); }, 30); }; });
     app.querySelectorAll('[data-wo]').forEach(function (d) { d.onclick = function () { showBatch(d.dataset.wo); }; });
@@ -431,7 +430,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="small sb-hint">' + (TOUCH ? 'Tap <b>IN</b> or <b>OUT</b>. Or tap <b>Scan with camera</b> and point at a shelf label.' : 'Keep this box selected. The scanner types the code and presses Enter. You can also type a code and press Enter.') + '</div></div>' +
       (can('Manager') ? '<details class="card"' + (TOUCH ? '' : ' open') + '><summary><h3 style="display:inline">Test without a scanner</h3></summary><div class="small muted">Tap a code to send it as if it were scanned.</div>' +
       '<div class="small"><b>1 · Worker badge</b></div><div class="sim" id="simW"></div>' +
-      '<div class="small"><b>2 · Batch label</b></div><div class="sim" id="simB"></div>' +
+      '<div class="small"><b>2 · Work order net label</b></div><div class="sim" id="simB"></div>' +
       '<div class="small"><b>3 · Box label</b></div><div class="sim" id="simL"></div>' +
       '<div class="small"><b>Commands</b></div><div class="sim" id="simC"></div>' +
       '<h3 style="margin-top:6px">How it works</h3><ol class="small" style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px">' +
@@ -440,7 +439,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<li>Taking nets out: tap <b>OUT</b>, type the size, tap the color. The app shows the box. Take the nets out and tap how many.</li>' +
       '<li>Made a mistake? Tap <b>Undo my last scan</b> within ' + UNDO_MIN + ' minutes and pick why.</li>' +
       '<li>Managers: <b>Box recount</b>. Scan each shelf label and type how many are in that box. Scan <b>TOP</b> for the top of the racks. Apply the counts on <a href="#stock">Stock</a>.</li>' +
-      '<li>Production: scan the <b>batch label</b> at each step: Cut → Base → Sides → Finish → Pack. After Pack, scan the batch, then <b>TOP</b> or an <b>empty</b> box.</li></ol></details>' : '') + '</div>');
+      '<li>Work orders: scan the <b>net label</b> (WOMQD…) at your step and tap the one green button: <b>Received</b> when the net reaches you, <b>Done</b> when your step is finished. Rack-in: scan the net, put it in the box the app shows, scan the box.</li></ol></details>' : '') + '</div>');
     var inp = document.getElementById('scanIn');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); var v = inp.value; inp.value = ''; handle(v); } });
     if (!TOUCH) document.addEventListener('click', refocus);
@@ -457,7 +456,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     tg.parentNode.onclick = function (e) { e.stopPropagation(); };
     function sim(id, codes) { var el = document.getElementById(id); if (!el) return; el.innerHTML = codes.map(function (c) { return '<button type="button" data-c="' + esc(c[0]) + '" title="' + esc(c[1] || '') + '">' + esc(c[0]) + (c[1] ? ' · ' + esc(c[1]) : '') + '</button>'; }).join(''); }
     sim('simW', S.workers.map(function (w) { return [w.id, w.name.replace(' (sample)', '')]; }));
-    sim('simB', Object.values(S.batches).filter(function (b) { return b.stage < 6; }).slice(-6).map(function (b) { return [b.id, SHORT[b.stage + 1] + ' next']; }));
+    var simW = []; woOpen().forEach(function (o) { woNetList(o).forEach(function (x) { var nx = woNext(x); if (nx && simW.length < 6) simW.push([woCode(o, x), nx.say]); }); });
+    sim('simB', simW);
     var picks = ['DN-210x100-BK', 'DN-210x100-GR', 'DN-200x100-BK', 'DN-250x150-GR', 'DN-210x95-BR', 'DN-205x90-GR', 'DN-210x100-BR'].map(function (id) { return [BY_ID[id].pick, BY_ID[id].size + ' ' + BY_ID[id].color]; }).concat([[FLOOR2, 'top of racks']]);
     sim('simL', picks);
     sim('simC', [['CMD-PUTAWAY', 'IN'], ['CMD-TAKEOUT', 'OUT'], ['CMD-BOXCOUNT', 'Box recount'], ['CMD-UNDO'], ['CMD-CANCEL'], ['QTY-1'], ['QTY-5'], ['QTY-20']]);
@@ -467,7 +467,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   var camLast = '';
   function camKeep() { // stays open after a wrong code, or when a box label is the next thing to scan (rack-in, or a mode like OUT / EMPTY / REFILL / Count boxes)
     var f = document.getElementById('fb');
-    return !!(f && /\bbad\b/.test(f.className)) || sess.await === 'loc' || (/^CMD-/.test(camLast) && !/^CMD-(PUTAWAY|TAKEOUT|CANCEL|UNDO)$/.test(camLast) && !!sess.mode);
+    return !!(f && /\bbad\b/.test(f.className)) || sess.await === 'loc' || sess.await === 'woloc' || (/^CMD-/.test(camLast) && !/^CMD-(PUTAWAY|TAKEOUT|CANCEL|UNDO)$/.test(camLast) && !!sess.mode);
   }
   function camBack() { var a = document.getElementById('adjust'); showOnPhone(a && a.innerHTML ? 'adjust' : 'fb'); }
   function refocus() { var i = document.getElementById('scanIn'); if (i && document.activeElement !== i && !(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && document.activeElement.id !== 'scanIn')) i.focus(); }
@@ -485,6 +485,8 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       else if (sess.await === 'bcnet') p = 'Top of racks: pick the size, then tap the color';
       else if (sess.await === 'bctop' && sess.bc) p = 'How many boxes of ' + esc(netLabel(sess.net)) + ' are on top of the racks?';
       else if (sess.await === 'check') p = 'Check, then tap Yes';
+      else if (sess.await === 'woloc') p = 'Rack-in: scan the box label';
+      else if (sess.woc) p = 'Tap the step below, or scan the next net';
       else if (sess.await === 'pasize') p = paOut() ? 'OUT: which net are you taking out?' : 'IN: what net is in your hand?';
       else if (sess.await === 'paqty') p = paOut() ? 'Take the nets out of the box below, then tap how many' : 'Put the nets in the box below, then tap how many';
       else if (sess.await === 'bcqty' && sess.bc) p = 'How many ' + esc(netLabel(sess.net)) + ' ' + esc(sess.bc.loc === FLOOR2 ? 'on top of the racks' : 'in ' + sess.bc.loc) + '? <span class="small">' + (sess.bc.nets.length > 1 ? 'Count only the ' + esc(sess.net.color) + ' bin · ' : '') + (sess.bc.loc === FLOOR2 ? 'number of nets: a full box is ' + TOP_BOX : 'type the number (0 if none)') + '</span>';
@@ -532,14 +534,17 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       if (!/^CMD-/.test(code)) { fb('Tap <b>Yes, save</b>, or <b>Back</b> to change it.', 'warn'); return; }
       sess.await = null;
     }
-    var adj = document.getElementById('adjust'); if (adj && !/^\d+$/.test(code)) adj.innerHTML = '';
     if (code === '2F') code = FLOOR2; // labels printed before 11 Nov 2026
+    var woBox = sess.await === 'woloc' && sess.woc && (BOXES[code] || code === FLOOR2);
+    if (sess.woc && !woBox && !/^WOMQD/.test(code)) { sess.woc = null; if (sess.await === 'woloc') sess.await = null; } // a work order card closes on any other scan
+    var adj = document.getElementById('adjust'); if (adj && !/^\d+$/.test(code) && !woBox) adj.innerHTML = '';
+    if (woBox) { woRackScan(code); return; } // rack-in: the box for the work order net just scanned
     if (/^EMP-\d+$/.test(code)) {
       var w = worker(code); if (!w) { fb('Unknown badge <b>' + esc(code) + '</b>. Ask the admin to add it on the People page.', 'bad'); return; }
       if (code === sess.emp) { sess.mode = null; sess.await = null; fb('Hello ' + esc(w.name) + '.', 'ok'); paint(); return; }
       askSwitch(w); return; // someone else's badge: they type their own PIN, so nobody can scan in another person's name
     }
-    if (code === 'CMD-CANCEL') { sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; sess.bc = null; if (adj) adj.innerHTML = ''; fb('Cleared.', 'ok'); paint(); return; }
+    if (code === 'CMD-CANCEL') { sess.woc = null; sess.mode = null; sess.await = null; sess.wo = null; sess.net = null; sess.bc = null; if (adj) adj.innerHTML = ''; fb('Cleared.', 'ok'); paint(); return; }
     if (!sess.emp) { fb('Scan your worker badge first, so the system knows who did this.', 'bad'); return; }
     if (code === 'CMD-UNDO') { startUndo(); return; }
     var m = /^CMD-(OUT|FBA|RETURN|DAMAGED|COUNT|SWAP|REFILL|EMPTY|BOXCOUNT|PUTAWAY|TAKEOUT)$/.exec(code);
@@ -552,6 +557,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (m && m[1] === 'BOXCOUNT' && !sheetNew()) { fb(OLD_SHEET + 'use the count sheet on the Stock page.', 'bad'); return; }
     if (m) { sess.mode = m[1]; sess.await = null; sess.wo = null; sess.bc = null; fb(esc(m[1] === 'BOXCOUNT' ? 'BOX RECOUNT' : m[1]) + ' mode on. ' + esc(MODE_HELP[m[1]]) + (m[1] === 'BOXCOUNT' ? ' ' + countProgressText() : ''), 'ok'); paint(); return; }
     if (/reason$/.test(sess.await || '')) { fb('Tap a reason first, or scan CANCEL.', 'bad'); return; }
+    if (/^WOMQD/.test(code)) { woScan(code); return; } // a work order net: show where it is and its next step
     var q = /^QTY-(\d+)$/.exec(code) || (/^\d+$/.test(code) ? [code, code] : null);
     if (q) { applyQty(parseInt(q[1], 10)); return; }
     if (/^WO-\d+$/.test(code)) { if (paMode() && S.batches[code] && sess.pa) { paChoose(BY_ID[S.batches[code].net], null); return; } scanBatch(code); return; } // IN / OUT: a batch label fills in the size and colour
@@ -767,12 +773,14 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   function snapBoxes(codes) { var o = {}; codes.forEach(function (c) { o[c] = clone(S.boxes[c] || null); }); return o; }
   function boxSig(r) { return r ? (r.state || 'full') + '|' + (r.made || '') : 'none'; }
   function undoWhat(ev) {
+    if (/^WO/.test(ev.type)) return ev.note || ev.type;
     var n = BY_ID[ev.net];
     return [ev.type === 'STAGE' ? ev.note : ev.type === 'BOXCOUNT' ? 'Box recount' : ev.type === 'BOXADD' ? 'IN +' + ev.qty : ev.type === 'BOXQTY' ? 'Box change ' + ev.was + ' → ' + ev.qty : ev.type, ev.qty != null && ev.type !== 'STAGE' && ev.type !== 'BOXADD' && ev.type !== 'BOXQTY' ? ev.qty : '', n ? netLabel(n) : '', ev.wo || '', ev.loc ? (ev.loc === FLOOR2 ? 'top of racks' : ev.loc) : ''].filter(function (x) { return x !== ''; }).join(' · ');
   }
   // r = what to put back: { stock: { net: change }, batch: { wo, prev }, boxes: { code: record before }, counts: { key: record before } }
   function remember(ev, r) {
     var u = { id: ev.id, type: ev.type, t: ev.t, who: ev.who, what: undoWhat(ev), stock: r.stock || {}, batch: null, boxes: {}, counts: {}, countAdd: r.countAdd || {}, putAdd: r.putAdd || {}, picks: r.picks || {}, topParts: r.topParts || {} };
+    if (r.wo) { var wx = woState().orders[r.wo.order].nets[r.wo.no]; u.wo = { order: r.wo.order, no: r.wo.no, prev: r.wo.prev, after: woSig(wx) }; }
     if (r.batch) { var b = S.batches[r.batch.wo]; u.batch = { wo: r.batch.wo, prev: r.batch.prev, after: { stage: b.stage, loc: b.loc || null }, rej: 0 }; }
     Object.keys(r.boxes || {}).forEach(function (c) { u.boxes[c] = { prev: r.boxes[c], after: boxSig(S.boxes[c]) }; });
     Object.keys(r.counts || {}).forEach(function (k) { u.counts[k] = { prev: r.counts[k], after: S.counts[k] ? Number(S.counts[k].qty) : null }; });
@@ -786,6 +794,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     return u;
   }
   function undoConflict(u) { // someone else changed the same thing since: do not undo blindly
+    if (u.wo) { var wo = woState().orders[u.wo.order], wx = wo && wo.nets && wo.nets[u.wo.no]; if (!wx || woSig(wx) !== u.wo.after) return 'that net has moved on since then'; }
     if (u.batch) {
       var b = S.batches[u.batch.wo];
       if (!b || b.stage !== u.batch.after.stage || (b.loc || null) !== u.batch.after.loc) return 'batch ' + u.batch.wo + ' has moved on since then' + (b ? ' (now: ' + STAGES[b.stage] + ')' : '');
@@ -821,6 +830,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     }; });
   }
   function resumeMode() { // after an undo or a cancelled undo, IN / OUT carries on where it was
+    if (sess.woc) { woCard(false); return; }
     if (!paMode()) return;
     if (!sess.pa) { paStart(); return; }
     sess.await = sess.pa.net ? 'paqty' : 'pasize'; paDraw();
@@ -877,6 +887,10 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (Object.keys(u.picks || {}).length) ev.picks = {};
     Object.keys(u.picks || {}).forEach(function (k) { var p = k.split('|'); pickTick(p[0], p[1], -u.picks[k]); ev.picks[k] = -u.picks[k]; ev.net = ev.net || p[1]; });
     S.log.forEach(function (e) { if (e.id === u.id && !isUndone(e)) { e.undone = true; e.note = (e.note || '') + ' · UNDONE'; } });
+    if (u.wo) { // a work order scan: the net goes back to where it was; the sheet works out the rest (stock, box, numbers)
+      var wo = woState().orders[u.wo.order]; wo.nets[u.wo.no] = u.wo.prev; woCount(wo);
+      ev = { type: 'WOUNDO', who: sess.emp, undoes: u.id, reason: reason, order: wo.id, net: wo.net, note: 'Undo ' + u.what + ' · reason: ' + reason };
+    }
     S.undo = null; addLog(ev); save();
     var n = ev.net && BY_ID[ev.net];
     fb('<b>Undone:</b> ' + esc(u.what) + '. Reason saved: ' + esc(reason) + '.' + (n ? ' ' + esc(netLabel(n)) + ' is ' + onHand(n.id) + ' in total.' : ''), 'ok');
@@ -1847,6 +1861,376 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       (untracked ? '<div class="small muted">' + untracked + ' boxes have not been scanned since the new layout. They count as full with an unknown date until the first REFILL, SWAP or rack-in.</div>' : ''));
   }
 
+  // ---------- door work orders (owner 23 Nov 2026, Code.gs version 12) ----------
+  // One label per net: WOMQD045-07/20 = door order 45, net 7 of 20, and the barcode is the same text. A label printed again
+  // ends in -R2, -R3 ...; the older label then stops working. Steps: Cutting, Stitch base, Stitch sides, Final finishing, Packing
+  // (each Received, then Done), then Rack-in (scan the net, then the box: it goes into stock the same way as IN).
+  // A scan shows only the next step. Workers never see numbers per person; managers and the owner do.
+  var WO_STEPS = ['Cutting', 'Stitch base', 'Stitch sides', 'Final finishing', 'Packing', 'Rack-in'], WO_RACK = 5, WO_V = 12, WO_MAX = 1000;
+  var REJECT_REASONS = ['Torn or damaged', 'Cut wrong', 'Stitching wrong', 'Wrong size', 'Other'];
+  var BACK_REASONS = ['Cut wrong', 'Stitching wrong', 'Finishing wrong', 'Other'];
+  function woOn() { return !sheetOn() || (S.sheetV || 0) >= WO_V; }
+  function woState() { S.wo = S.wo || { orders: {}, rights: { me: false, ids: [] }, daily: [] }; return S.wo; }
+  function canOrders() { return can('Manager') || !!(S.wo && S.wo.rights && S.wo.rights.me); }
+  function woPad(n, w) { n = String(n); while (n.length < w) n = '0' + n; return n; }
+  function woParse(code) {
+    var m = /^(WOMQD\d{3,})-(\d+)\/(\d+)(?:-R(\d+))?$/.exec(String(code || '').trim().toUpperCase());
+    return m ? { base: m[1] + '-' + m[2] + '/' + m[3], order: m[1], no: Number(m[2]), label: m[4] ? Number(m[4]) : 1 } : null;
+  }
+  function woBase(o, no) { return o.id + '-' + woPad(no, Math.max(2, String(o.qty).length)) + '/' + o.qty; }
+  function woCode(o, x) { return woBase(o, x.no) + (x.label > 1 ? '-R' + x.label : ''); }
+  function woFind(p) { var o = p && woState().orders[p.order], x = o && o.nets ? o.nets[p.no] : null; return x && woBase(o, p.no) === p.base ? { o: o, x: x } : null; }
+  function woDate(iso) { var d = new Date(iso); return woPad(d.getMonth() + 1, 2) + woPad(d.getDate(), 2) + String(d.getFullYear()).slice(2); } // 112326 = 23 Nov 2026
+  function woWhen(iso) { if (!iso) return ''; var d = new Date(iso); return (isToday(iso) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ') + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+  function woSig(x) { return x.step + '|' + x.st; }
+  function woWhere(x) { // where the net is, in plain words: "Waiting for Stitch sides · last step by Ramesh, 10:40"
+    var who = x.by ? wname(x.by) + ', ' + woWhen(x.at) : '';
+    if (x.st === 'racked') return 'On the rack' + (x.box ? (x.box === FLOOR2 ? ', on top of the rack' : ' in ' + x.box) : '') + (who ? ' · by ' + who : '');
+    if (x.st === 'rejected') return 'Rejected' + (x.note ? ': ' + x.note : '') + (who ? ' · by ' + who : '');
+    if (x.st === 'recv') return 'At ' + WO_STEPS[x.step] + ' · received by ' + who;
+    return 'Waiting for ' + WO_STEPS[x.step] + (who ? ' · last step by ' + who : '');
+  }
+  function woNext(x) { // the one next step for this net
+    if (x.st === 'wait' && x.step < WO_RACK) return { act: 'RECV', say: WO_STEPS[x.step] + ': received' };
+    if (x.st === 'recv') return { act: 'DONE', say: WO_STEPS[x.step] + ': done' };
+    if (x.st === 'wait' && x.step === WO_RACK) return { act: 'RACKIN', say: 'Rack-in' };
+    return null;
+  }
+  function woFromRemote(w) {
+    var out = { orders: {}, rights: w.rights || { me: false, ids: [] }, daily: w.daily || [] };
+    (w.orders || []).forEach(function (o) {
+      var x = { id: o.id, net: o.net, qty: o.qty, created: o.created, by: o.by, due: o.due || '', state: o.state, finished: o.finished || '', racked: o.racked || 0, rejected: o.rejected || 0, note: o.note || '', nets: null };
+      if (o.nets) { x.nets = {}; o.nets.forEach(function (a) { x.nets[a[0]] = { no: a[0], step: a[1], st: a[2], by: a[3], at: a[4], box: a[5], label: a[6] || 1, rw: a[7] || 0, db: (a[8] || []).slice(), note: a[9] || '' }; }); }
+      out.orders[o.id] = x;
+    });
+    return out;
+  }
+  function woNetList(o) { return o.nets ? Object.keys(o.nets).map(function (k) { return o.nets[k]; }).sort(function (a, b) { return a.no - b.no; }) : []; }
+  function woCount(o) { // racked and rejected; done when every net is on the rack or rejected
+    if (!o.nets) return;
+    var l = woNetList(o); o.racked = l.filter(function (x) { return x.st === 'racked'; }).length; o.rejected = l.filter(function (x) { return x.st === 'rejected'; }).length;
+    var done = l.length && o.racked + o.rejected === l.length;
+    if (done && o.state !== 'done') { o.state = 'done'; o.finished = now(); } else if (!done) { o.state = 'open'; o.finished = ''; }
+  }
+  function woLocal(x, act, who, e) { // the same change the sheet makes, so this phone shows it at once (also offline)
+    if (act === 'RECV') x.st = 'recv';
+    else if (act === 'DONE') { x.db[x.step] = who; x.step += 1; x.st = 'wait'; }
+    else if (act === 'RACKIN') { x.step = 6; x.st = 'racked'; x.box = e.loc; }
+    else if (act === 'REJECT') { x.st = 'rejected'; x.note = e.reason; }
+    else if (act === 'BACK') { for (var k = e.to; k < 5; k++) x.db[k] = ''; x.step = e.to; x.st = 'wait'; x.rw = (x.rw || 0) + 1; x.note = e.reason; }
+    x.by = who; x.at = now();
+  }
+  function woLate(o) { return o.state !== 'done' && o.due && new Date(o.due).getTime() < Date.now(); }
+  function woOpen() { return Object.keys(woState().orders).map(function (k) { return S.wo.orders[k]; }).filter(function (o) { return o.state !== 'done'; }); }
+  function woBoxFor(n) { var hs = homeOf(n); for (var i = 0; i < hs.length; i++) if (counted(hs[i], n.id) < boxCap(hs[i], n.id)) return hs[i]; return FLOOR2; } // first box with room, else the top
+
+  // ---- labels: Small 50 x 25 mm (or Large 4 x 6 in): size and colour, barcode, the code and the date. Nothing else. ----
+  function woLabel(o, x) {
+    var n = BY_ID[o.net], code = woCode(o, x), el = document.createElement('div');
+    el.className = 'lbl lbl-wo';
+    el.innerHTML = '<div class="wl-net"><span class="wl-size">' + esc(n ? n.size : o.net) + '</span> <span class="wl-col">' + esc(n ? n.color.toUpperCase() : '') + '</span></div>' +
+      '<svg class="bc"></svg><div class="wl-code"><span>' + esc(code) + '</span><span>' + esc(woDate(o.created)) + '</span></div>';
+    barcode(el.querySelector('.bc'), code, null, '9mm');
+    return el;
+  }
+  function woPrint(o, list) { printLabels(list.map(function (x) { return woLabel(o, x); }), '50x25'); }
+
+  // ---- the scan station: a WO label shows the net, where it is, and the one next step ----
+  function woScan(code) {
+    if (!woOn()) { fb(OLD_SHEET + 'work order labels cannot be scanned yet.', 'bad'); return; }
+    var p = woParse(code);
+    if (!p) { fb('<b>' + esc(code) + '</b> is not a work order label.', 'bad'); return; }
+    var f = woFind(p);
+    if (!f) { fb('Work order net <b>' + esc(p.base) + '</b> is not on this phone yet. Wait a few seconds and scan it again.', 'bad'); if (sheetOn()) pull(); return; }
+    if (p.label < f.x.label) { fb('<b>Old label.</b> ' + esc(code) + ' was printed again, so it no longer works. Use the new label: <b>' + esc(woCode(f.o, f.x)) + '</b>.', 'bad'); return; }
+    sess.mode = null; sess.bc = null; sess.net = null; sess.await = null; sess.pa = null;
+    sess.woc = { code: code, p: p };
+    woCard(false);
+  }
+  function woCard(problem) {
+    var adj = document.getElementById('adjust'), c = sess.woc, f = c && woFind(c.p); if (!adj || !f) return;
+    var o = f.o, x = f.x, n = BY_ID[o.net], nx = woNext(x), h = '<div class="pa pa-card wo-card"><div class="pa-net"><span class="sw sw-' + esc(n ? n.color : '') + '"></span>' + esc(n ? netLabel(n).replace('x', ' × ') : o.net) + '</div>' +
+      '<div class="wo-code">' + esc(woCode(o, x)) + '</div><div class="wo-now">' + esc(woWhere(x)) + '</div>';
+    sess.await = null;
+    if (problem) {
+      h += '<div class="pa-step">What is wrong?</div><button type="button" class="act wo-rej" data-wo-rej="1">Reject: the net is damaged</button>' +
+        (x.step > 0 ? '<div class="pa-step">Send back for rework to</div><div class="acts-g">' + WO_STEPS.slice(0, Math.min(x.step, WO_RACK)).map(function (s, k) { return '<button type="button" class="act" data-wo-back="' + k + '">' + esc(s) + '</button>'; }).join('') + '</div>' : '') +
+        '<button type="button" class="act ghost" data-wo-card="1">Back</button>';
+    } else if (nx && nx.act === 'RACKIN') {
+      var box = woBoxFor(n), top = box === FLOOR2;
+      sess.await = 'woloc';
+      h += '<div class="pa-go">' + (top ? 'Boxes are full: put it on top of the rack' : 'Put it in box') + '</div>' + (top ? '' : '<div class="pa-loc">' + esc(box) + '</div><div class="pa-hint">' + esc(locHint(box)) + '</div>') +
+        '<div class="pa-step">Then scan the box label</div>' +
+        (top ? '<button type="button" class="act wo-go" data-wo-box="' + FLOOR2 + '">Put on top of the rack</button>' : '<button type="button" class="act ghost" data-wo-box="' + esc(box) + '">No label to scan? Tap: in ' + esc(box) + '</button><button type="button" class="act ghost" data-wo-box="' + FLOOR2 + '">Box full? Put it on top of the rack</button>');
+    } else if (nx) {
+      h += '<button type="button" class="act wo-go" data-wo="' + nx.act + '">' + esc(nx.say) + '</button>';
+    }
+    if (x.st === 'wait' || x.st === 'recv') h += problem ? '' : '<button type="button" class="linkbtn wo-pl" data-wo-prob="1">Problem with this net?</button>';
+    else h += '<div class="small">Nothing to scan here.' + (x.st === 'rejected' ? ' Ask the manager if it is fixed.' : '') + '</div>';
+    adj.innerHTML = h + '</div>';
+    adj.onclick = function (e) {
+      var b = e.target.closest('[data-wo],[data-wo-box],[data-wo-prob],[data-wo-rej],[data-wo-back],[data-wo-card]'); if (!b) return; e.stopPropagation();
+      var d = b.dataset;
+      if (d.wo) woDo(d.wo, {});
+      else if (d.woBox) woRackScan(d.woBox);
+      else if (d.woProb) woCard(true);
+      else if (d.woCard) woCard(false);
+      else if (d.woRej) { sess.await = 'reason'; paint(); fb('Why is it rejected? <b>Tap a reason.</b>', 'warn'); reasonPicker(REJECT_REASONS, function (r) { sess.await = null; woDo('REJECT', { reason: r }); }); }
+      else if (d.woBack) { var to = +d.woBack; sess.await = 'reason'; paint(); fb('Back to <b>' + esc(WO_STEPS[to]) + '</b>. Why? <b>Tap a reason.</b>', 'warn'); reasonPicker(BACK_REASONS, function (r) { sess.await = null; woDo('BACK', { to: to, reason: r }); }); }
+      if (!TOUCH) refocus();
+    };
+    fb(esc(n ? netLabel(n) : o.net) + ' · ' + esc(woCode(o, x)) + '. ' + (problem ? 'Tap what is wrong.' : nx ? (nx.act === 'RACKIN' ? 'Scan the box label.' : 'Tap <b>' + esc(nx.say) + '</b>.') : esc(woWhere(x)) + '.'), x.st === 'rejected' ? 'warn' : 'ok');
+    paint(); showOnPhone('adjust');
+  }
+  function woRackScan(code) {
+    var c = sess.woc, f = c && woFind(c.p); if (!f) { sess.await = null; paint(); return; }
+    var n = BY_ID[f.o.net];
+    if (code !== FLOOR2 && homeOf(n).indexOf(code) < 0) { fb('<b>Wrong box.</b> ' + esc(code) + ' is not a box for ' + esc(netLabel(n)) + '. Put it in <b>' + esc(woBoxFor(n)) + '</b>' + (woBoxFor(n) === FLOOR2 ? ' (top of the rack)' : '') + '.', 'bad'); return; }
+    woDo('RACKIN', { loc: code });
+  }
+  function woDo(act, e) {
+    var c = sess.woc, f = c && woFind(c.p); if (!f) return;
+    var o = f.o, x = f.x, n = BY_ID[o.net], prev = clone(x), from = [x.step, x.st], step = x.step;
+    var said = act === 'RECV' ? WO_STEPS[step] + ': received' : act === 'DONE' ? WO_STEPS[step] + ': done' : act === 'RACKIN' ? 'Rack-in ' + (e.loc === FLOOR2 ? 'top of the rack' : e.loc) : act === 'REJECT' ? 'Rejected (' + e.reason + ')' : 'Back to ' + WO_STEPS[e.to] + ' (' + e.reason + ')';
+    var ev = { type: 'WOSTEP', who: sess.emp, code: c.code, order: o.id, act: act, from: from, net: o.net, note: said + ' · ' + woBase(o, x.no) };
+    if (e.loc) ev.loc = e.loc; if (e.reason) ev.reason = e.reason; if (e.to != null) ev.to = e.to;
+    var r = { wo: { order: o.id, no: x.no, prev: prev } };
+    if (act === 'RACKIN') { // into stock the same way as IN: the total and the box number go up
+      var st = {}; st[o.net] = -1; r.stock = st;
+      r.boxes = e.loc !== FLOOR2 && isEmpty(e.loc) ? snapBoxes([e.loc]) : {};
+      S.stock[o.net] = onHand(o.net) + 1;
+      var sa = shelfAdd(e.loc, o.net, 1), pa = {}; if (sa) pa[sa.key] = sa; r.putAdd = pa;
+      if (e.loc !== FLOOR2 && isEmpty(e.loc)) setBox(e.loc, { state: 'full', net: o.net, wo: o.id, made: null });
+    }
+    woLocal(x, act, sess.emp, e); woCount(o);
+    ev = addLog(ev); remember(ev, r); save();
+    sess.woc = null; sess.await = null;
+    var adj = document.getElementById('adjust'); if (adj) adj.innerHTML = '';
+    fb('✓ <b>' + esc(said) + '</b> · ' + esc(n ? netLabel(n) : o.net) + ' · ' + esc(woBase(o, x.no)) + (act === 'RACKIN' ? ' · ' + onHand(o.net) + ' in stock' : '') + '. <b>Scan the next net.</b>', act === 'REJECT' || act === 'BACK' ? 'warn' : 'ok');
+    paint();
+  }
+
+  // ---- Work orders page (managers, or whoever the manager gave label printing today) ----
+  function woSizes() { return Array.from(new Set(NETS.map(function (n) { return n.size; }))).sort(function (a, b) { var x = a.split('x').map(Number), y = b.split('x').map(Number); return x[0] - y[0] || x[1] - y[1]; }); }
+  function woNetOf(size, color) { return NETS.filter(function (n) { return n.size === String(size).toLowerCase().replace(/\s*[×*x]\s*/, 'x') && n.color === color; })[0] || null; }
+  function woLine(line) { // "210x150 Black 25", "210 x 150 BK 25", "MQDR-210x150-BK 25"
+    var up = String(line).toUpperCase().replace(/×/g, 'X'), r = findNet(line), n = r.net;
+    var z = /(\d{3})\s*[X*]\s*(\d{2,3})/.exec(up);
+    if (!n && z) { var col = /\b(BK|BLK|RB)\b/.test(up) ? 'Black' : /\b(BR|BRW|BRN|TBR)\b/.test(up) ? 'Brown' : /\b(GR|GRY|RG)\b/.test(up) ? 'Grey' : ''; if (col) n = woNetOf(z[1] + 'x' + z[2], col); }
+    var rest = (z ? up.replace(z[0], ' ') : up).replace(/[A-Z]+-\S+/g, ' '), nums = rest.match(/\d+/g) || [];
+    return { line: line, net: n, qty: nums.length ? parseInt(nums[nums.length - 1], 10) : 0 };
+  }
+  function woLines(text) { return String(text || '').split(/[\n,;]+/).map(function (s) { return s.trim(); }).filter(Boolean).map(woLine); }
+  function woDueDefault() { var d = new Date(Date.now() + 2 * 864e5); d.setMinutes(0, 0, 0); return woLocalInput(d.toISOString()); }
+  function woLocalInput(iso) { if (!iso) return ''; var d = new Date(iso); return d.getFullYear() + '-' + woPad(d.getMonth() + 1, 2) + '-' + woPad(d.getDate(), 2) + 'T' + woPad(d.getHours(), 2) + ':' + woPad(d.getMinutes(), 2); }
+  function woDueText(o) { return o.due ? woWhen(o.due) : 'no due time'; }
+  function woMake(lines, due, msg, done) { // the sheet gives each order the next number, so making orders needs the internet (scans do not)
+    var key = JSON.stringify([lines.map(function (l) { return [l.net.id, l.qty]; }), due]);
+    if (!S.woReq || S.woReq.key !== key) S.woReq = { key: key, req: 'RQ-' + newId() }; // the same orders sent again never make them twice
+    var orders = lines.map(function (l) { return { net: l.net.id, netName: netLabel(l.net), qty: l.qty, due: due || '' }; });
+    function take(list) {
+      list.forEach(function (o) { var x = { id: o.id, net: o.net, qty: o.qty, created: o.created, by: o.by, due: o.due || '', state: 'open', finished: '', racked: 0, rejected: 0, note: '', nets: {} };
+        for (var k = 1; k <= o.qty; k++) x.nets[k] = { no: k, step: 0, st: 'wait', by: '', at: '', box: '', label: 1, rw: 0, db: ['', '', '', '', ''], note: '' };
+        woState().orders[o.id] = x; });
+      S.woReq = null; save(); done(list.map(function (o) { return S.wo.orders[o.id]; }));
+    }
+    if (!sheetOn()) { // not connected (test or demo): number them on this device
+      var no = Object.keys(woState().orders).reduce(function (a, k) { return Math.max(a, parseInt(k.slice(5), 10) || 0); }, 0);
+      take(orders.map(function (o) { return Object.assign({ id: 'WOMQD' + woPad(++no, 3), created: now(), by: wname(sess.emp) }, o); })); return;
+    }
+    msg.textContent = 'Making the orders…';
+    sheetCall({ action: 'wocreate', req: S.woReq.req, station: S.settings.station || '', orders: orders }).then(function (d) {
+      if (!d.ok) { msg.textContent = d.auth ? 'Please sign in again.' : (d.error || 'Not saved.'); return; }
+      take(d.orders);
+    }).catch(function () { msg.textContent = 'No internet: orders were not made. Making an order needs the internet, because each order gets the next number. Scanning nets works without it. Try again when you are online.'; });
+  }
+  var woView = { filter: 'open', open: null, all: false };
+  function woProgress(o) { // where the nets are: "12 at Stitch base · 8 on the rack"
+    if (!o.nets) return o.racked + ' on the rack' + (o.rejected ? ' · ' + o.rejected + ' rejected' : '');
+    var c = {}; woNetList(o).forEach(function (x) { var k = x.st === 'racked' ? 'on the rack' : x.st === 'rejected' ? 'rejected' : (x.st === 'recv' ? 'at ' : 'waiting for ') + WO_STEPS[x.step]; c[k] = (c[k] || 0) + 1; });
+    return Object.keys(c).map(function (k) { return c[k] + ' ' + k; }).join(' · ');
+  }
+  function viewOrders() {
+    var sizes = woSizes(), mgr = can('Manager'), all = Object.keys(woState().orders).map(function (k) { return S.wo.orders[k]; }).sort(function (a, b) { return a.created < b.created ? 1 : -1; });
+    var list = all.filter(function (o) { return woView.filter === 'all' || (woView.filter === 'open' ? o.state !== 'done' : o.state === 'done'); });
+    var people = S.workers.filter(function (w) { return w.active !== false; }), rights = (S.wo.rights && S.wo.rights.ids) || [];
+    h('<h2>Work orders</h2>' + (sheetOn() && !woOn() ? '<div class="note">' + esc(OLD_SHEET) + 'work orders cannot be made yet.</div>' : '') +
+      '<div class="grid2"><div class="card"><h3>New work order</h3><form id="woNew" class="wo-form">' +
+      '<label class="f">Size<input id="woSize" list="woSizes" placeholder="e.g. 210x150" autocomplete="off" required></label><datalist id="woSizes">' + sizes.map(function (s) { return '<option value="' + s + '">'; }).join('') + '</datalist>' +
+      '<label class="f">Colour<select id="woCol">' + COLORS.map(function (c) { return '<option>' + c + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f">Nets<input id="woQty" type="number" min="1" max="' + WO_MAX + '" inputmode="numeric" required></label>' +
+      '<label class="f">Due<input id="woDue" type="datetime-local" value="' + woDueDefault() + '"></label>' +
+      '<button class="btn primary">Make order and print labels</button></form><div class="small" id="woMsg"></div></div>' +
+      '<div class="card"><h3>Paste a list</h3><div class="small muted">One order per line (or comma): size, colour, number of nets. Example: <b>210x150 Black 25, 210x105 Grey 16</b>.</div>' +
+      '<textarea id="woPaste" rows="4" placeholder="210x150 Black 25&#10;210x105 Grey 16"></textarea>' +
+      '<div class="row" style="align-items:flex-end"><label class="f">Due for all<input id="woPDue" type="datetime-local" value="' + woDueDefault() + '"></label><button class="btn" id="woCheck" type="button">Check the list</button></div><div id="woPrev"></div></div></div>' +
+      (mgr ? '<div class="card"><h3>Label printing today</h3><div class="small muted">Give someone the right to make orders and print labels for today only. It ends at midnight.</div>' +
+        '<div class="row" style="align-items:flex-end"><label class="f">Person<select id="woRP">' + people.filter(function (w) { return rights.indexOf(w.id) < 0; }).map(function (w) { return '<option value="' + esc(w.id) + '">' + esc(w.name) + ' (' + esc(w.id) + ')</option>'; }).join('') + '</select></label><button class="btn" id="woRGive" type="button">Give for today</button></div>' +
+        '<div class="small">' + (rights.length ? 'Today: ' + rights.map(function (id) { return '<b>' + esc(wname(id)) + '</b> <button type="button" class="linkbtn" data-wo-rtake="' + esc(id) + '">take away</button>'; }).join(' · ') : 'Nobody else today.') + '</div></div>' : '') +
+      '<div class="card" id="woDetail" hidden></div>' +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><h3>Orders</h3><div class="row">' + [['open', 'Open'], ['done', 'Finished'], ['all', 'All']].map(function (f) { return '<button type="button" class="btn' + (woView.filter === f[0] ? ' primary' : '') + '" data-wo-f="' + f[0] + '">' + f[1] + '</button>'; }).join('') + '</div></div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Order</th><th>Net</th><th>Nets</th><th>Where the nets are</th><th>Due</th><th>Made</th><th></th></tr></thead><tbody>' +
+      (list.map(function (o) { var n = BY_ID[o.net]; return '<tr><td><code>' + esc(o.id) + '</code></td><td>' + (n ? '<span class="sw sw-' + n.color + '"></span>' + esc(netLabel(n)) : esc(o.net)) + '</td><td>' + o.qty + '</td><td class="small">' + esc(woProgress(o)) + '</td><td>' + esc(woDueText(o)) + (woLate(o) ? ' <span class="pill p-bad">Late</span>' : '') + (o.state === 'done' && o.due && o.finished > o.due ? ' <span class="pill p-warn">Was late</span>' : '') + '</td><td class="muted small">' + esc(woWhen(o.created)) + ' · ' + esc(o.by || '') + '</td><td><button class="btn" data-wo-open="' + esc(o.id) + '">Open</button></td></tr>'; }).join('') ||
+        '<tr><td colspan="7" class="muted">No ' + (woView.filter === 'open' ? 'open ' : woView.filter === 'done' ? 'finished ' : '') + 'work orders.</td></tr>') + '</tbody></table></div></div>' +
+      (Object.keys(S.batches || {}).length ? '<div class="small muted">Older batch labels (WO-0001 ...) are on the <a href="#batches">old batches page</a>.</div>' : ''));
+    var msg = document.getElementById('woMsg');
+    function printed(os) { os.forEach(function (o) { woView.open = o.id; }); viewOrders(); var m = document.getElementById('woMsg'); if (m) m.innerHTML = 'Made <b>' + os.map(function (o) { return esc(o.id); }).join(', ') + '</b>: ' + os.reduce(function (a, o) { return a + o.qty; }, 0) + ' labels.'; woPrintMany(os); }
+    document.getElementById('woNew').onsubmit = function (e) {
+      e.preventDefault();
+      var n = woNetOf(document.getElementById('woSize').value.trim(), document.getElementById('woCol').value), q = parseInt(document.getElementById('woQty').value, 10), due = document.getElementById('woDue').value;
+      if (!n) { msg.textContent = 'No door net in that size. Pick a size from the list (e.g. 210x150).'; return; }
+      if (!(q >= 1 && q <= WO_MAX)) { msg.textContent = 'An order has 1 to ' + WO_MAX + ' nets.'; return; }
+      woMake([{ net: n, qty: q }], due ? new Date(due).toISOString() : '', msg, printed);
+    };
+    document.getElementById('woCheck').onclick = function () {
+      var ls = woLines(document.getElementById('woPaste').value), bad = ls.filter(function (l) { return !l.net || !(l.qty >= 1 && l.qty <= WO_MAX); }), ok = ls.filter(function (l) { return bad.indexOf(l) < 0; }), pv = document.getElementById('woPrev');
+      if (!ls.length) { pv.innerHTML = '<div class="small">Paste or type at least one line.</div>'; return; }
+      pv.innerHTML = '<div class="tablewrap"><table><thead><tr><th>Line</th><th>Net</th><th>Nets</th></tr></thead><tbody>' + ls.map(function (l) { var b = bad.indexOf(l) >= 0; return '<tr' + (b ? ' class="bad-row"' : '') + '><td class="small">' + esc(l.line) + '</td><td>' + (l.net ? '<span class="sw sw-' + l.net.color + '"></span>' + esc(netLabel(l.net)) : '<b>size or colour not found</b>') + '</td><td>' + (l.qty >= 1 && l.qty <= WO_MAX ? l.qty : '<b>1 to ' + WO_MAX + '</b>') + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+        (bad.length ? '<div class="small"><b>' + bad.length + ' line' + (bad.length > 1 ? 's' : '') + ' cannot be read</b> and will be left out. Fix them and check again.</div>' : '') +
+        (ok.length ? '<button class="btn primary" type="button" id="woGo">Make ' + ok.length + ' order' + (ok.length > 1 ? 's' : '') + ' and print ' + ok.reduce(function (a, l) { return a + l.qty; }, 0) + ' labels</button>' : '') + '<div class="small" id="woPMsg"></div>';
+      var go = document.getElementById('woGo'); if (go) go.onclick = function () { var due = document.getElementById('woPDue').value; go.disabled = true; woMake(ok, due ? new Date(due).toISOString() : '', document.getElementById('woPMsg'), function (os) { document.getElementById('woPaste').value = ''; printed(os); }); };
+    };
+    var give = document.getElementById('woRGive'); if (give) give.onclick = function () { var id = document.getElementById('woRP').value; if (!id) return; woRight(id, true); };
+    app.querySelectorAll('[data-wo-rtake]').forEach(function (b) { b.onclick = function () { woRight(b.dataset.woRtake, false); }; });
+    app.querySelectorAll('[data-wo-f]').forEach(function (b) { b.onclick = function () { woView.filter = b.dataset.woF; viewOrders(); }; });
+    app.querySelectorAll('[data-wo-open]').forEach(function (b) { b.onclick = function () { woView.open = b.dataset.woOpen; woView.all = false; woDetail(true); }; });
+    if (woView.open) woDetail(false);
+  }
+  function woPrintMany(os) { var nodes = []; os.forEach(function (o) { woNetList(o).forEach(function (x) { nodes.push(woLabel(o, x)); }); }); if (nodes.length) printLabels(nodes, '50x25'); }
+  function woRight(id, on) {
+    var r = woState().rights; r.ids = (r.ids || []).filter(function (x) { return x !== id; }); if (on) r.ids.push(id);
+    addLog({ type: 'WORIGHT', who: sess.emp, badge: id, on: on, note: (on ? 'Label printing today given to ' : 'Label printing today taken from ') + wname(id) }); save();
+    toast(on ? wname(id) + ' can make orders and print labels today.' : wname(id) + ' can no longer print labels today.'); viewOrders();
+  }
+  function woDetail(scroll) {
+    var el = document.getElementById('woDetail'), o = woState().orders[woView.open]; if (!el) return;
+    if (!o) { el.hidden = true; return; }
+    var n = BY_ID[o.net], mgr = can('Manager'), list = woNetList(o), people = S.workers.filter(function (w) { return w.active !== false; });
+    var wait = [0, 0, 0, 0, 0, 0], recv = [0, 0, 0, 0, 0], passed = [0, 0, 0, 0, 0, 0];
+    list.forEach(function (x) { if (x.st === 'wait' && x.step <= WO_RACK) wait[x.step]++; if (x.st === 'recv') recv[x.step]++; for (var k = 0; k < Math.min(x.step, 6); k++) passed[k]++; });
+    var shown = woView.all ? list : list.slice(0, 100), old = Date.now() - 864e5;
+    el.innerHTML = '<div class="row" style="justify-content:space-between;align-items:center"><h3>' + esc(o.id) + ' · ' + esc(n ? netLabel(n) : o.net) + ' · ' + o.qty + ' nets</h3><div class="row"><button class="btn" id="woPrAll">Print all labels</button><button class="btn" id="woClose">Close</button></div></div>' +
+      '<div class="small">Made ' + esc(woWhen(o.created)) + ' by ' + esc(o.by || '') + ' · due <b>' + esc(woDueText(o)) + '</b>' + (woLate(o) ? ' <span class="pill p-bad">Late</span>' : '') + (o.state === 'done' ? ' · finished ' + esc(woWhen(o.finished)) : '') + ' · ' + o.racked + ' on the rack' + (o.rejected ? ', ' + o.rejected + ' rejected' : '') + '</div>' +
+      (mgr ? '<div class="row" style="align-items:flex-end"><label class="f">Due<input id="woDueE" type="datetime-local" value="' + woLocalInput(o.due) + '"></label><button class="btn" id="woDueS" type="button">Save due time</button></div>' : '') +
+      (o.nets ? '<div class="tablewrap"><table class="wo-steps"><thead><tr><th>Step</th><th>Waiting</th><th>Received</th><th>Passed</th>' + (mgr ? '<th>Whole order at once</th>' : '') + '</tr></thead><tbody>' +
+        WO_STEPS.map(function (s, k) {
+          var b = mgr && k < WO_RACK ? (wait[k] ? '<button type="button" class="btn" data-wo-bulk="RECV" data-k="' + k + '">All ' + wait[k] + ' received</button> ' : '') + (recv[k] ? '<button type="button" class="btn" data-wo-bulk="DONE" data-k="' + k + '">All ' + recv[k] + ' done</button>' : '') : k === WO_RACK && mgr ? '<span class="small muted">each net with its box</span>' : '';
+          return '<tr><td>' + esc(s) + '</td><td>' + (wait[k] || '') + '</td><td>' + (k < WO_RACK ? recv[k] || '' : '') + '</td><td>' + (passed[k] || '') + '</td>' + (mgr ? '<td>' + b + '</td>' : '') + '</tr>';
+        }).join('') + '</tbody></table></div>' +
+        (mgr ? '<div class="row" style="align-items:flex-end"><label class="f">Whole order done by<select id="woFor"><option value="">me (' + esc(wname(sess.emp)) + ')</option>' + people.map(function (w) { return '<option value="' + esc(w.id) + '">' + esc(w.name) + '</option>'; }).join('') + '</select></label><span class="small muted">The nets count for this person.</span></div>' : '') +
+        '<div class="tablewrap"><table class="wo-nets"><thead><tr><th>Net</th><th>Where it is now</th><th>Cut</th><th>Base</th><th>Sides</th><th>Finish</th><th>Pack</th><th></th></tr></thead><tbody>' +
+        shown.map(function (x) {
+          var stuck = (x.st === 'wait' || x.st === 'recv') && x.at && new Date(x.at).getTime() < old;
+          return '<tr' + (x.st === 'rejected' ? ' class="bad-row"' : '') + '><td><code>' + esc(woCode(o, x)) + '</code>' + (x.rw ? ' <span class="pill p-warn">rework ' + x.rw + '</span>' : '') + '</td><td class="small">' + esc(woWhere(x)) + (stuck ? ' <span class="pill p-warn">over a day</span>' : '') + '</td>' +
+            [0, 1, 2, 3, 4].map(function (k) { return '<td class="small">' + esc(x.db[k] ? wname(x.db[k]) : '') + '</td>'; }).join('') +
+            '<td class="wo-act">' + (x.st !== 'racked' ? '<button type="button" class="linkbtn" data-wo-rp="' + x.no + '">Reprint</button>' : '') + (mgr && x.st !== 'racked' ? ' <button type="button" class="linkbtn" data-wo-fix="' + x.no + '">Change</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' + (list.length > shown.length ? '<button class="btn" id="woAll" type="button">Show all ' + list.length + ' nets</button>' : '') +
+        '<div class="small muted">Reprint makes a new label (it ends in -R2, -R3 ...): the old label stops working. A net on the rack is stock now: fix it with Undo or OUT.</div>'
+        : '<div class="small muted">Finished more than 3 days ago: the nets are in the Google Sheet (WO nets done, Production).</div>') + '<div id="woFix"></div>';
+    el.hidden = false;
+    if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('woClose').onclick = function () { woView.open = null; el.hidden = true; };
+    document.getElementById('woPrAll').onclick = function () { if (!list.length) { toast('The nets of this order are no longer on this device.'); return; } woPrint(o, list.filter(function (x) { return x.st !== 'racked'; }).length ? list.filter(function (x) { return x.st !== 'racked'; }) : list); };
+    var all = document.getElementById('woAll'); if (all) all.onclick = function () { woView.all = true; woDetail(false); };
+    var ds = document.getElementById('woDueS'); if (ds) ds.onclick = function () { var v = document.getElementById('woDueE').value; o.due = v ? new Date(v).toISOString() : ''; addLog({ type: 'WODUE', who: sess.emp, order: o.id, due: o.due, net: o.net, note: 'Due ' + (o.due ? woWhen(o.due) : 'none') + ' · ' + o.id }); save(); toast('Due time saved.'); viewOrders(); };
+    el.querySelectorAll('[data-wo-bulk]').forEach(function (b) { b.onclick = function () {
+      var k = +b.dataset.k, act = b.dataset.woBulk, who = document.getElementById('woFor').value || sess.emp, hit = list.filter(function (x) { return x.step === k && x.st === (act === 'RECV' ? 'wait' : 'recv'); });
+      if (!hit.length) return;
+      hit.forEach(function (x) { woLocal(x, act, who, {}); }); woCount(o);
+      addLog({ type: 'WOBULK', who: sess.emp, 'for': who, order: o.id, act: act, step: k, nos: hit.map(function (x) { return x.no; }), net: o.net, qty: hit.length, note: WO_STEPS[k] + ': ' + (act === 'RECV' ? 'received' : 'done') + ', ' + hit.length + ' nets of ' + o.id + ' for ' + wname(who) }); save();
+      toast(WO_STEPS[k] + ': ' + hit.length + ' nets ' + (act === 'RECV' ? 'received' : 'done') + ' for ' + wname(who) + '.'); woDetail(false);
+    }; });
+    el.querySelectorAll('[data-wo-rp]').forEach(function (b) { b.onclick = function () {
+      var x = o.nets[+b.dataset.woRp]; if (!x) return;
+      x.label = (x.label || 1) + 1; addLog({ type: 'WOREPRINT', who: sess.emp, code: woBase(o, x.no), label: x.label, order: o.id, net: o.net, note: 'Label printed again: ' + woCode(o, x) }); save();
+      woPrint(o, [x]); woDetail(false);
+    }; });
+    el.querySelectorAll('[data-wo-fix]').forEach(function (b) { b.onclick = function () { woFixForm(o, o.nets[+b.dataset.woFix]); }; });
+  }
+  function woFixForm(o, x) { // manager: put a net at any step (move back, fix a wrong scan, bring back a rejected net)
+    var el = document.getElementById('woFix'); if (!el || !x) return;
+    var opts = []; WO_STEPS.forEach(function (s, k) { opts.push([k + '|wait', 'Waiting for ' + s]); if (k < WO_RACK) opts.push([k + '|recv', 'Received at ' + s]); }); opts.push(['0|rejected', 'Rejected']);
+    el.innerHTML = '<div class="card wo-fixc"><b>Change ' + esc(woCode(o, x)) + '</b> · now: ' + esc(woWhere(x)) + '<div class="row" style="align-items:flex-end"><label class="f">Put it at<select id="woFixTo">' + opts.map(function (p) { return '<option value="' + p[0] + '"' + (p[0] === x.step + '|' + x.st ? ' selected' : '') + '>' + esc(p[1]) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f" style="flex:1">Why<input id="woFixWhy" maxlength="80" placeholder="e.g. scanned the wrong net"></label><button class="btn primary" type="button" id="woFixGo">Save</button><button class="btn" type="button" id="woFixNo">Cancel</button></div></div>';
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('woFixNo').onclick = function () { el.innerHTML = ''; };
+    document.getElementById('woFixGo').onclick = function () {
+      var v = document.getElementById('woFixTo').value.split('|'), why = document.getElementById('woFixWhy').value.trim(), k = +v[0], st = v[1];
+      if (!why) { toast('Type why.'); return; }
+      if (st !== 'rejected') { for (var i = k; i < 5; i++) x.db[i] = ''; x.step = k; } else x.note = why;
+      x.st = st; x.by = sess.emp; x.at = now(); woCount(o);
+      addLog({ type: 'WOSET', who: sess.emp, codes: [woBase(o, x.no)], step: k, status: st, reason: why, order: o.id, net: o.net, note: 'Changed ' + woBase(o, x.no) + ': ' + woWhere(x) + ' · reason: ' + why }); save();
+      toast('Saved.'); woDetail(false);
+    };
+  }
+
+  // ---- production numbers (managers and the owner): who did what, per step, per day; where nets pile up; orders on time ----
+  function woDay(d) { return d.getFullYear() + '-' + woPad(d.getMonth() + 1, 2) + '-' + woPad(d.getDate(), 2); }
+  function woDaysAgo(k) { var d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - k); return woDay(d); }
+  function woPile() { // nets waiting and received at each step, in the open orders
+    var w = [0, 0, 0, 0, 0, 0], r = [0, 0, 0, 0, 0];
+    woOpen().forEach(function (o) { woNetList(o).forEach(function (x) { if (x.st === 'wait' && x.step <= WO_RACK) w[x.step]++; if (x.st === 'recv') r[x.step]++; }); });
+    return { w: w, r: r };
+  }
+  function woBoard() { // dashboard: where the nets are right now, and where they pile up
+    var p = woPile(), tot = p.w.reduce(function (a, b) { return a + b; }, 0) + p.r.reduce(function (a, b) { return a + b; }, 0), max = Math.max.apply(null, WO_STEPS.map(function (s, k) { return p.w[k] + (p.r[k] || 0); }));
+    return '<div class="card"><h3><a href="#production">Production now</a></h3>' + (tot ? '<div class="wo-board">' + WO_STEPS.map(function (s, k) {
+      var q = p.w[k] + (p.r[k] || 0);
+      return '<div class="wo-col' + (q && q === max ? ' pile' : '') + '"><div class="wo-cn">' + q + '</div><div class="wo-cs">' + esc(s) + '</div><div class="small">' + p.w[k] + ' waiting' + (k < WO_RACK ? ' · ' + p.r[k] + ' in work' : '') + '</div></div>';
+    }).join('') + '</div><div class="small muted">The step with the most nets (marked) is where work piles up.</div>' : '<div class="small muted">No nets in production. Make a work order on the <a href="#orders">Work orders</a> page.</div>') + '</div>';
+  }
+  var prodView = { from: 0, to: 0 };
+  function viewProduction() {
+    var D = (woState().daily || []), periods = [['Today', 0, 0], ['Yesterday', 1, 1], ['Last 7 days', 6, 0], ['Last 30 days', 29, 0]];
+    var from = woDaysAgo(prodView.from), to = woDaysAgo(prodView.to), rows = D.filter(function (r) { return r.day >= from && r.day <= to; });
+    var ppl = {}, steps = WO_STEPS;
+    rows.forEach(function (r) {
+      var p = ppl[r.who] = ppl[r.who] || { name: r.name || wname(r.who), s: {}, rej: 0, rw: 0, days: {} };
+      var s = p.s[r.step] = p.s[r.step] || { done: 0, min: 0, timed: 0 }; s.done += r.done; s.min += r.min; s.timed += r.timed; p.rej += r.rej; p.rw += r.rework;
+      if (r.first && r.last) { var d = p.days[r.day] = p.days[r.day] || { a: r.first, b: r.last }; if (r.first < d.a) d.a = r.first; if (r.last > d.b) d.b = r.last; }
+    });
+    var pRows = Object.keys(ppl).sort(function (a, b) { return ppl[a].name < ppl[b].name ? -1 : 1; }).map(function (id) {
+      var p = ppl[id], days = Object.keys(p.days), hrs = days.reduce(function (a, d) { return a + (new Date(p.days[d].b) - new Date(p.days[d].a)) / 36e5; }, 0);
+      return '<tr><td>' + esc(p.name) + '</td>' + steps.map(function (s) { var x = p.s[s]; return '<td>' + (x && x.done ? '<b>' + x.done + '</b>' + (x.timed ? '<span class="small muted"> · ' + Math.round(x.min / x.timed) + ' min</span>' : '') : '') + '</td>'; }).join('') +
+        '<td>' + (p.rej || '') + '</td><td>' + (p.rw || '') + '</td><td>' + days.length + '</td><td>' + hrs.toFixed(1) + '</td></tr>';
+    }).join('');
+    var perDay = {}; D.forEach(function (r) { if (r.day < woDaysAgo(13)) return; var d = perDay[r.day] = perDay[r.day] || {}; d[r.step] = (d[r.step] || 0) + r.done; });
+    var dRows = Object.keys(perDay).sort().reverse().map(function (d) { return '<tr><td>' + esc(new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })) + '</td>' + steps.map(function (s) { return '<td>' + (perDay[d][s] || '') + '</td>'; }).join('') + '</tr>'; }).join('');
+    var wk = function (a, b) { var t = 0; D.forEach(function (r) { if (r.day >= woDaysAgo(a) && r.day <= woDaysAgo(b) && r.step === 'Rack-in') t += r.done; }); return t; };
+    var orders = Object.keys(woState().orders).map(function (k) { return S.wo.orders[k]; }), fin = orders.filter(function (o) { return o.state === 'done' && o.finished && Date.now() - new Date(o.finished) < 30 * 864e5; });
+    var dueFin = fin.filter(function (o) { return o.due; }), onTime = dueFin.filter(function (o) { return o.finished <= o.due; }).length, lead = fin.length ? fin.reduce(function (a, o) { return a + (new Date(o.finished) - new Date(o.created)) / 36e5; }, 0) / fin.length : 0;
+    var late = orders.filter(woLate), bySize = {};
+    orders.forEach(function (o) { var n = BY_ID[o.net]; if (n && o.racked) bySize[n.size] = (bySize[n.size] || 0) + o.racked; });
+    var p = woPile();
+    h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Production</h2><div class="row" style="align-items:flex-end"><label class="f">Month<input id="prMonth" type="month" value="' + woDaysAgo(0).slice(0, 7) + '"></label><button class="btn" id="prDl" type="button">Download month (.xlsx)</button></div></div><div class="small" id="prMsg"></div>' +
+      (sheetOn() && !woOn() ? '<div class="note">' + esc(OLD_SHEET) + 'there are no production numbers yet.</div>' : '') +
+      '<div class="grid">' + kpi(woOpen().length, 'Open work orders', '') + kpi(late.length, 'Late orders', late.length ? 'bad' : 'ok') + kpi(dueFin.length ? Math.round(100 * onTime / dueFin.length) + '%' : '—', 'On time (finished, last 30 days)', '') +
+      kpi(fin.length ? (lead < 48 ? lead.toFixed(1) + ' h' : (lead / 24).toFixed(1) + ' days') : '—', 'Label to rack, average', '') + kpi(wk(6, 0), 'On the rack, last 7 days', '') + kpi(wk(13, 7), 'On the rack, the 7 days before', '') + '</div>' +
+      woBoard() +
+      '<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><h3>Who did what</h3><div class="row">' + periods.map(function (x) { return '<button type="button" class="btn' + (prodView.from === x[1] && prodView.to === x[2] ? ' primary' : '') + '" data-pr="' + x[1] + '|' + x[2] + '">' + x[0] + '</button>'; }).join('') + '</div></div>' +
+      '<div class="small muted">Nets done at each step, with the average minutes from Received to Done. Rejects and rework: nets of this person that were rejected or sent back later. Hours: first to last scan of each day. Every size counts the same.</div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Name</th>' + steps.map(function (s) { return '<th>' + esc(s) + '</th>'; }).join('') + '<th>Rejects</th><th>Rework</th><th>Days</th><th>Hours</th></tr></thead><tbody>' + (pRows || '<tr><td colspan="' + (steps.length + 5) + '" class="muted">No scans in this time.</td></tr>') + '</tbody></table></div></div>' +
+      '<div class="grid2"><div class="card"><h3>Nets done per day</h3><div class="tablewrap"><table><thead><tr><th>Day</th>' + steps.map(function (s) { return '<th>' + esc(s) + '</th>'; }).join('') + '</tr></thead><tbody>' + (dRows || '<tr><td colspan="7" class="muted">Nothing yet.</td></tr>') + '</tbody></table></div></div>' +
+      '<div class="card"><h3>Orders</h3>' + (late.length ? '<div class="small"><b>Late:</b> ' + late.map(function (o) { return '<a href="#orders" data-pr-o="' + esc(o.id) + '">' + esc(o.id) + '</a> (' + esc(BY_ID[o.net] ? netLabel(BY_ID[o.net]) : o.net) + ', due ' + esc(woWhen(o.due)) + ')'; }).join(', ') + '</div>' : '<div class="small">No late orders.</div>') +
+      '<h3>On the rack by size</h3><div class="small">' + (Object.keys(bySize).sort().map(function (s) { return esc(s) + ': <b>' + bySize[s] + '</b>'; }).join(' · ') || 'Nothing yet.') + '</div>' +
+      '<div class="small muted">From open orders and orders finished in the last 30 days.</div></div></div>');
+    app.querySelectorAll('[data-pr]').forEach(function (b) { b.onclick = function () { var v = b.dataset.pr.split('|'); prodView.from = +v[0]; prodView.to = +v[1]; viewProduction(); }; });
+    app.querySelectorAll('[data-pr-o]').forEach(function (a) { a.onclick = function () { woView.open = a.dataset.prO; woView.filter = 'open'; }; });
+    document.getElementById('prDl').onclick = function () {
+      var m = document.getElementById('prMonth').value, msg = document.getElementById('prMsg');
+      if (!/^\d{4}-\d{2}$/.test(m)) { msg.textContent = 'Pick a month.'; return; }
+      var go = function (daily) {
+        var rows = [['Day', 'Employee', 'Name', 'Step', 'Received', 'Done', 'Average minutes', 'Rejects caused', 'Rework caused', 'First scan', 'Last scan']].concat(daily.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : a.name < b.name ? -1 : 1; }).map(function (r) {
+          return [r.day, r.who, r.name, r.step, r.recv, r.done, r.timed ? Math.round(10 * r.min / r.timed) / 10 : '', r.rej, r.rework, r.first ? new Date(r.first).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '', r.last ? new Date(r.last).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''];
+        }));
+        var a = document.createElement('a'); a.href = URL.createObjectURL(xlsx(rows)); a.download = 'ArmorX-production-' + m + '.xlsx'; a.click(); msg.textContent = daily.length ? 'Downloaded ' + daily.length + ' rows.' : 'No production in ' + m + '.';
+      };
+      if (!sheetOn()) { go(D.filter(function (r) { return r.day.indexOf(m) === 0; })); return; }
+      msg.textContent = 'Loading ' + m + '…';
+      fetch(sheetUrl() + '?t=' + encodeURIComponent(S.auth.t) + '&prod=' + encodeURIComponent(m)).then(function (r) { return r.json(); }).then(function (d) { if (!d.ok) { msg.textContent = d.error || 'Could not load it.'; return; } go(d.daily || []); }).catch(function () { msg.textContent = 'No internet: try again when you are online.'; });
+    };
+  }
+
   // ---------- setup labels ----------
   function viewPrint() {
     var sides = window.SIDES || [];
@@ -2205,6 +2589,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (Array.isArray(d.picks)) { S.picks = {}; d.picks.forEach(function (x) { if (x.state === 'undone') return; var p = S.picks[x.list] = S.picks[x.list] || { id: x.list, no: Number(x.no) || 0, created: x.created, by: x.by, state: x.state, off: !x.keep, boxed: !!x.boxed, doneBy: x.doneBy || '', doneAt: x.doneAt || '', lines: {} }; p.lines[x.net] = { qty: Number(x.qty) || 0, picked: Number(x.picked) || 0, note: x.note || '', from: x.from || [] }; if (x.state !== 'done') p.state = 'open'; }); }
     S.outToday = d.outToday && typeof d.outToday === 'object' ? d.outToday : null; S.outAt = d.at || now();
     if (Array.isArray(d.counts)) { S.counts = {}; d.counts.forEach(function (c) { if (c.box && c.net) S.counts[countKey(c.box, c.net)] = { box: c.box, net: c.net, qty: Number(c.qty) || 0, at: c.at, by: c.by, parts: c.parts || undefined }; }); }
+    if (d.wo) S.wo = woFromRemote(d.wo);
     S.sheetV = Number(d.v) || 0;
     if (d.me && S.auth && d.me.id === S.auth.id) { S.auth.name = d.me.name; S.auth.level = d.me.level; } // a level change by the admin shows at once
     syncState.at = d.at || now(); syncState.err = null;
@@ -2218,7 +2603,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
         .then(function (d) {
           if (!d.ok && d.auth) { signOut('Your sign-in has ended. Please sign in again.'); return false; }
           if (!d.ok) throw new Error(/access key/i.test(d.error || '') ? 'sheet script is older than version 5' : (d.error || 'read failed'));
-          var lv = S.auth.level; applyRemote(d); save(); if (S.auth.level !== lv) paintNav(); return true;
+          var lv = S.auth.level, lr = canOrders(); applyRemote(d); save(); if (S.auth.level !== lv || canOrders() !== lr) paintNav(); return true;
         })
         .catch(function (err) { syncState.err = err.message || 'offline'; return false; });
     }).then(function (changed) { paintSync(); return changed; });
@@ -2235,7 +2620,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     return typed || picked || !!app.querySelector('#cntBar:not([hidden]), #bcApply, #xlPrev table, #snOut table, #boxInfo:not([hidden]), #pFinal button, [data-pin] + input, td > .pin-in');
   }
   // Pages that only show numbers are redrawn when new data comes in; the scan station and forms are never redrawn by it.
-  var LIVE_PAGES = ['dashboard', 'stock', 'racks', 'refill', 'log', 'pick'];
+  var LIVE_PAGES = ['dashboard', 'stock', 'racks', 'refill', 'log', 'pick', 'production'];
   function refreshPage() {
     var k = (location.hash || '#dashboard').slice(1);
     if (LIVE_PAGES.indexOf(k) >= 0 && !userBusy()) route();
@@ -2243,13 +2628,13 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   setInterval(function () { pull().then(function (changed) { if (changed) refreshPage(); }); }, 20000);
 
   // ---------- router ----------
-  var VIEWS = { dashboard: viewDashboard, scan: viewScan, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, help: viewHelp, log: viewLog, people: viewPeople, settings: viewSettings };
+  var VIEWS = { dashboard: viewDashboard, scan: viewScan, orders: viewOrders, production: viewProduction, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, help: viewHelp, log: viewLog, people: viewPeople, settings: viewSettings };
   // Who sees which page. Floor work (scan, pick, refill, rack map) is open to everyone: staff rotate.
-  var NEED = { dashboard: 'Manager', batches: 'Manager', stock: 'Manager', print: 'Manager', log: 'Manager', people: 'Admin', settings: 'Admin' };
+  var NEED = { dashboard: 'Manager', production: 'Manager', batches: 'Manager', stock: 'Manager', print: 'Manager', log: 'Manager', people: 'Admin', settings: 'Admin' };
   function paintNav() {
     var on = signedIn();
     document.getElementById('tabs').hidden = !on;
-    document.querySelectorAll('#tabs a').forEach(function (a) { a.hidden = !can(NEED[a.getAttribute('href').slice(1)] || 'Worker'); });
+    document.querySelectorAll('#tabs a').forEach(function (a) { var k = a.getAttribute('href').slice(1); a.hidden = k === 'orders' ? !canOrders() : !can(NEED[k] || 'Worker'); }); // Work orders: managers, or label printing today
     var me = document.getElementById('meChip');
     if (me) { me.hidden = !on; if (on) { me.querySelector('.n').textContent = S.auth.name + (S.auth.level !== 'Worker' ? ' · ' + S.auth.level : ''); } }
   }
@@ -2258,7 +2643,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     paintNav();
     if (!signedIn()) { document.querySelectorAll('#tabs a').forEach(function (a) { a.classList.remove('on'); }); viewSignIn(); paintSync(); return; }
     var k = (location.hash || '').slice(1).split('?')[0]; // #help?q=words opens Help with a search
-    if (!VIEWS[k] || !can(NEED[k] || 'Worker')) { k = can('Manager') && !TOUCH ? 'dashboard' : 'scan'; history.replaceState(null, '', location.pathname + location.search + '#' + k); }
+    if (!VIEWS[k] || !can(NEED[k] || 'Worker') || (k === 'orders' && !canOrders())) { k = can('Manager') && !TOUCH ? 'dashboard' : 'scan'; history.replaceState(null, '', location.pathname + location.search + '#' + k); }
     document.querySelectorAll('#tabs a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + k); });
     VIEWS[k]();
     paintSync();
