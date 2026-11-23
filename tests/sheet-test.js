@@ -68,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 11 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 12 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -126,7 +126,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 11', state().v === 11);
+expect('doGet says version 12', state().v === 12);
 expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
 expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
   sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
@@ -310,6 +310,97 @@ post([{ type: 'BOXCOUNT', loc: 'TOP', net: TN, qty: 47, parts: [22] }, { type: '
 expect('box recount of the top with a part box, applied: 47 = 1 full + part 22', topRow().qty === 47 && topRow().parts.join() === '22');
 r = call({ t: login('EMP-07', '5555').token, events: [{ id: 'wbc', type: 'BOXCOUNT', loc: 'AL-C1-R1', net: TN, qty: 3, t: '2026-11-11T09:00:00.000Z' }] });
 expect('box recount is for managers: a worker\'s is refused', r.refused.length === 1);
+
+
+// ---- door work orders (version 12): labels per net, Received then Done at every step, rack-in adds stock ----
+{
+  const WK = login('EMP-07', '5555').token;
+  const as = (tok, events) => call({ t: tok, station: 'Test', events });
+  const at = (min) => new Date(Date.UTC(2026, 10, 23, 4, 0) + min * 60000).toISOString(); // 23 Nov 2026, 09:30 in India
+  const nets = () => sheets['WO nets'].data.slice(1).filter((x) => x[0]);
+  const netRow = (code) => nets().find((x) => x[0] === code);
+  const WN = 'DN-210x120-BK', WB = 'DN-210x120-BK';
+  r = call({ action: 'wocreate', t: WK, req: 'rq0', orders: [{ net: WN, qty: 3 }] });
+  expect('work orders: a worker without label printing today cannot make orders', !r.ok && /manager/.test(r.error));
+  r = call({ action: 'wocreate', t: T.token, req: 'rq1', orders: [{ net: WN, netName: '210x120 Black', qty: 3, due: at(600) }, { net: 'DN-210x105-GR', qty: 2 }] });
+  expect('manager makes 2 orders: WOMQD001 (3 nets) and WOMQD002 (2 nets), one row per net', r.ok && r.orders.map((o) => o.id).join() === 'WOMQD001,WOMQD002' && nets().length === 5 && !!netRow('WOMQD001-01/3') && !!netRow('WOMQD002-02/2'));
+  r = call({ action: 'wocreate', t: T.token, req: 'rq1', orders: [{ net: WN, qty: 3 }, { net: 'DN-210x105-GR', qty: 2 }] });
+  expect('the same request sent again (lost answer) gives the same orders, never twice', r.ok && r.again && r.orders.length === 2 && sheets['Work orders'].data.length === 3 && nets().length === 5);
+  expect('an order has 1 to 1000 nets', !call({ action: 'wocreate', t: T.token, orders: [{ net: WN, qty: 1001 }] }).ok && !call({ action: 'wocreate', t: T.token, orders: [{ net: 'XX', qty: 2 }] }).ok);
+  r = as(T.token, [{ id: 'rt1', type: 'WORIGHT', badge: 'EMP-07', on: true, t: at(0) }]);
+  expect('manager gives label printing for today; the worker can then make an order (number counts up)', !r.refused.length && (() => { const x = call({ action: 'wocreate', t: WK, req: 'rq2', orders: [{ net: WN, qty: 1 }] }); return x.ok && x.orders[0].id === 'WOMQD003'; })());
+  r = as(WK, [{ id: 'rt2', type: 'WORIGHT', badge: 'EMP-07', on: true, t: at(0) }]);
+  expect('a worker cannot give label printing', r.refused.length === 1);
+  const g0 = get(WK);
+  expect('everyone reads the open orders with every net; workers get no numbers per person', g0.v === 12 && g0.wo.orders.length === 3 && g0.wo.orders[0].nets.length === 3 && g0.wo.orders[0].nets[0][2] === 'wait' && g0.wo.daily.length === 0 && g0.wo.rights.me === true);
+  const C1 = 'WOMQD001-01/3', C2 = 'WOMQD001-02/3', C3 = 'WOMQD001-03/3';
+  r = as(WK, [{ id: 'w-r1', type: 'WOSTEP', code: C1, act: 'RECV', from: [0, 'wait'], t: at(0) }]);
+  expect('Cutting received: saved', !r.refused.length && netRow(C1)[5] === 'recv' && netRow(C1)[6] === 'EMP-07');
+  r = as(T.token, [{ id: 'w-r1b', type: 'WOSTEP', code: C1, act: 'RECV', from: [0, 'wait'], t: at(1) }]);
+  expect('received twice (another phone): refused, says who has it', r.refused.length === 1 && /already received at Cutting by Test Stitcher/.test(r.refused[0].why));
+  r = as(WK, [{ id: 'w-r1', type: 'WOSTEP', code: C1, act: 'RECV', from: [0, 'wait'], t: at(0) }]);
+  expect('the same scan sent again (offline retry) is applied once, no error', !r.refused.length && sheets.Production.data.filter((x) => x[0] === 'w-r1').length === 1);
+  r = as(WK, [{ id: 'w-d2', type: 'WOSTEP', code: C2, act: 'DONE', from: [0, 'recv'], t: at(2) }]);
+  expect('a step cannot be skipped: Done before Received is refused', r.refused.length === 1 && /waiting for Cutting/.test(r.refused[0].why));
+  r = as(WK, [{ id: 'w-d1', type: 'WOSTEP', code: C1, act: 'DONE', from: [0, 'recv'], t: at(12) }]);
+  expect('Cutting done: the net waits for Stitch base, 12 minutes counted for the cutter', !r.refused.length && netRow(C1)[4] === 1 && netRow(C1)[5] === 'wait' && netRow(C1)[12] === 'EMP-07' && sheets.Production.data.find((x) => x[0] === 'w-d1')[9] === 12);
+  const d1 = get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Cutting');
+  expect('Production daily: 1 received, 1 done, 12 minutes for that person at Cutting today', d1 && d1.recv === 1 && d1.done === 1 && d1.min === 12 && d1.timed === 1 && d1.day === '2026-11-23');
+  r = as(T.token, [{ id: 'rp1', type: 'WOREPRINT', code: C2, label: 2, t: at(13) }]);
+  expect('reprint a lost label: the net now has label 2', !r.refused.length && netRow(C2)[9] === 2);
+  r = as(WK, [{ id: 'w-old', type: 'WOSTEP', code: C2, act: 'RECV', from: [0, 'wait'], t: at(14) }, { id: 'w-new', type: 'WOSTEP', code: C2 + '-R2', act: 'RECV', from: [0, 'wait'], t: at(14) }]);
+  expect('the old label stops working, the new one (-R2) works', r.refused.length === 1 && r.refused[0].id === 'w-old' && /Old label/.test(r.refused[0].why) && netRow(C2)[5] === 'recv');
+  as(WK, [{ id: 'w-d2b', type: 'WOSTEP', code: C2 + '-R2', act: 'DONE', from: [0, 'recv'], t: at(20) }, { id: 'w-r2b', type: 'WOSTEP', code: C2 + '-R2', act: 'RECV', from: [1, 'wait'], t: at(21) }]);
+  r = as(T.token, [{ id: 'w-bk', type: 'WOSTEP', code: C2 + '-R2', act: 'BACK', to: 0, reason: 'Cut too short', from: [1, 'recv'], t: at(22) }]);
+  expect('send back for rework: back at Cutting, rework counted, the cutter gets the rework', !r.refused.length && netRow(C2)[4] === 0 && netRow(C2)[5] === 'wait' && netRow(C2)[11] === 1 && netRow(C2)[12] === '' && get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Cutting').rework === 1);
+  r = as(WK, [{ id: 'w-rj0', type: 'WOSTEP', code: C3, act: 'REJECT', from: [0, 'wait'], t: at(23) }, { id: 'w-rj', type: 'WOSTEP', code: C3, act: 'REJECT', reason: 'Torn', from: [0, 'wait'], t: at(23) }]);
+  expect('reject needs a reason; then the net is rejected with it', r.refused.length === 1 && r.refused[0].id === 'w-rj0' && netRow(C3)[5] === 'rejected' && netRow(C3)[17] === 'Torn');
+  r = as(WK, [{ id: 'w-bulk', type: 'WOBULK', order: 'WOMQD002', act: 'RECV', step: 0, t: at(30) }]);
+  expect('a worker cannot do a whole order at once', r.refused.length === 1);
+  r = as(T.token, [{ id: 'm-bulk', type: 'WOBULK', order: 'WOMQD002', act: 'RECV', step: 0, for: 'EMP-07', t: at(30) }, { id: 'm-bulk2', type: 'WOBULK', order: 'WOMQD002', act: 'DONE', step: 0, for: 'EMP-07', t: at(45) }]);
+  expect('whole order for an unknown employee number is refused', as(T.token, [{ id: 'm-bad', type: 'WOBULK', order: 'WOMQD002', act: 'RECV', step: 0, for: 'EMP-999', t: at(29) }]).refused.length === 1);
+  expect('manager: whole order received and done at Cutting, counted for the person who cut', !r.refused.length && nets().filter((x) => x[1] === 'WOMQD002').every((x) => x[4] === 1 && x[5] === 'wait' && x[12] === 'EMP-07') && get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Cutting').done === 4);
+  expect('the manager is kept as the one who entered it', sheets.Production.data.filter((x) => String(x[0]).indexOf('m-bulk2#') === 0).every((x) => x[2] === 'EMP-07' && x[13] === 'EMP-06'));
+  r = as(T.token, [{ id: 'm-set', type: 'WOSET', codes: [C1], step: 5, status: 'wait', reason: 'Test', t: at(50) }]);
+  expect('manager fix: the net is put at Rack-in', !r.refused.length && netRow(C1)[4] === 5 && netRow(C1)[5] === 'wait');
+  const sk0 = get(T.token).stock[WB] || 0, bx = 'BR-C1-R3', inb0 = (get(T.token).shelf.find((y) => y.box === bx && y.net === WB) || { qty: 0 }).qty;
+  r = as(WK, [{ id: 'w-in', type: 'WOSTEP', code: C1, act: 'RACKIN', loc: bx, from: [5, 'wait'], t: at(55) }]);
+  let g = get(T.token);
+  expect('rack-in: stock +1 and the box +1, like IN, and it shows in the scan log', !r.refused.length && g.stock[WB] === sk0 + 1 && g.shelf.find((y) => y.box === bx && y.net === WB).qty === inb0 + 1 && netRow(C1)[5] === 'racked' && netRow(C1)[8] === bx && sheets.Scans.data.some((x) => x[0] === 'w-in' && x[2] === 'WOIN'));
+  r = as(T.token, [{ id: 'm-un', type: 'WOUNDO', undoes: 'w-in', reason: 'Wrong box', t: at(56) }]);
+  r = as(WK, [{ id: 'w-un0', type: 'WOUNDO', undoes: 'm-set', reason: 'x', t: at(56) }]);
+  expect('a worker cannot undo the manager\'s scan', r.refused.length === 1);
+  g = get(T.token);
+  expect('undo rack-in: stock and box back, the net waits for Rack-in again', g.stock[WB] === sk0 && g.shelf.find((y) => y.box === bx && y.net === WB).qty === inb0 && netRow(C1)[4] === 5 && netRow(C1)[5] === 'wait' && !!sheets.Production.data.find((x) => x[0] === 'w-in')[17]);
+  r = as(WK, [{ id: 'w-un2', type: 'WOUNDO', undoes: 'w-d1', reason: 'Scanned twice', t: at(57) }]);
+  expect('a worker cannot undo a scan older than 15 minutes', r.refused.length === 1 && /Too late/.test(r.refused[0].why));
+  r = as(T.token, [{ id: 'w-un2m', type: 'WOUNDO', undoes: 'w-d1', reason: 'Scanned twice', t: at(57) }]);
+  expect('undo refused when the net has moved on since', r.refused.length === 1 && /moved on/.test(r.refused[0].why));
+  const base9 = () => (get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Stitch base') || { recv: 0 }).recv;
+  as(WK, [{ id: 'w-r9', type: 'WOSTEP', code: 'WOMQD002-01/2', act: 'RECV', from: [1, 'wait'], t: at(60) }]);
+  const b9 = base9();
+  r = as(WK, [{ id: 'w-un9', type: 'WOUNDO', undoes: 'w-r9', reason: 'Wrong net or color', t: at(61) }]);
+  expect('undo your own last scan: the net is back, your number goes down', !r.refused.length && netRow('WOMQD002-01/2')[5] === 'wait' && base9() === b9 - 1);
+  as(WK, [{ id: 'w-in2', type: 'WOSTEP', code: C1, act: 'RACKIN', loc: 'TOP', from: [5, 'wait'], t: at(62) }]);
+  as(T.token, [{ id: 'm-set2', type: 'WOSET', codes: [C2], step: 5, status: 'wait', reason: 'Test', t: at(63) }]);
+  as(WK, [{ id: 'w-in3', type: 'WOSTEP', code: C2 + '-R2', act: 'RACKIN', loc: bx, from: [5, 'wait'], t: at(64) }]);
+  let o1 = get(T.token).wo.orders.find((o) => o.id === 'WOMQD001');
+  expect('order done when every net is on the rack or rejected: 2 racked, 1 rejected', o1.state === 'done' && o1.racked === 2 && o1.rejected === 1 && !!o1.finished);
+  as(T.token, [{ id: 'm-back', type: 'WOSET', codes: [C3], step: 0, status: 'wait', reason: 'Fixed', t: at(65) }]);
+  o1 = get(T.token).wo.orders.find((o) => o.id === 'WOMQD001');
+  expect('a rejected net brought back opens the order again', o1.state === 'open' && o1.rejected === 0 && netRow(C3)[5] === 'wait');
+  r = as(T.token, [{ id: 'm-due', type: 'WODUE', order: 'WOMQD002', due: at(90), t: at(66) }]);
+  expect('manager sets a due time', !r.refused.length && get(T.token).wo.orders.find((o) => o.id === 'WOMQD002').due === at(90));
+  const mo = JSON.parse(ctx.doGet({ parameter: { t: T.token, prod: '2026-11' } }).text), mw = JSON.parse(ctx.doGet({ parameter: { t: WK, prod: '2026-11' } }).text);
+  expect('monthly download: managers get the month per person and step, workers do not', mo.ok && mo.daily.some((x) => x.who === 'EMP-07' && x.step === 'Cutting') && !mw.ok);
+  // finished long ago: the net rows move to "WO nets done" at night, Production keeps every scan
+  as(T.token, [{ id: 'm-rj', type: 'WOSET', codes: [C3], step: 0, status: 'rejected', reason: 'Torn', t: at(67) }]);
+  sheets['Work orders'].data.find((x) => x[0] === 'WOMQD001')[8] = new Date(Date.now() - 20 * 864e5);
+  const p0 = sheets.Production.data.length;
+  ctx.dailySnapshot();
+  expect('night: nets of orders finished over 14 days ago move to "WO nets done", Production is kept', !nets().some((x) => x[1] === 'WOMQD001') && sheets['WO nets done'].data.filter((x) => x[1] === 'WOMQD001').length === 3 && sheets.Production.data.length === p0 && nets().length === 3);
+  sheets.Snapshots.data.splice(1); // the snapshot tests below start with no copies
+}
 
 // ---- daily snapshot and restore ----
 ctx.dailySnapshot(); ctx.dailySnapshot();

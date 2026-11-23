@@ -1,7 +1,7 @@
 // Help screen and printable cheat sheet. Plain words for the floor. Edit the answers here; the app searches them.
 // Rules: words must match what the app shows; no planning words; part-full or empty boxes are normal, never an error.
 // Each entry: t = topic, q = question, k = extra search words, a = answer (simple HTML: <b>, <br>, <ul><li>).
-window.HELP_TOPICS = ['Box codes and racks', 'Rack map', 'IN and OUT', 'Scan station', 'Counting', 'Mistakes', 'Stock and dashboard', 'Printing', 'Sign-in'];
+window.HELP_TOPICS = ['Box codes and racks', 'Rack map', 'IN and OUT', 'Work orders', 'Scan station', 'Counting', 'Mistakes', 'Stock and dashboard', 'Printing', 'Sign-in'];
 window.HELP_QA = [
   // ---- box codes and racks ----
   { t: 'Box codes and racks', q: 'What does a box code like AL-C5-R3 mean?', k: 'location code address shelf label rack side column row where read',
@@ -66,6 +66,30 @@ window.HELP_QA = [
     a: 'With it on, the app shows what will change before it saves, for example <b>Top of rack: 18 full boxes = 450 → 20 full boxes = 500</b> and <b>Total in stock: 538 → 588</b>. Tap <b>Yes, save</b>, or <b>Back</b> to change it. Each person can switch it on or off on the Scan station (it is kept on that phone). A number that looks too high always asks, even when it is off.' },
   { t: 'IN and OUT', q: 'What does the small "i" do?', k: 'i info information button help tip explain',
     a: 'Tap the small <b>i</b> next to a button to see in three lines what it does, what you type, and what changes in stock.' },
+
+  // ---- work orders (door nets): one label per net, scanned at every step ----
+  { t: 'Work orders', q: 'How do I scan a net at my step?', k: 'work order wo womqd label net step received done cutting stitch base sides finishing packing scan',
+    a: '<ul><li>Scan station: scan the label on the net (it starts with <b>WOMQD</b>), or tap <b>Scan with camera</b>.</li><li>The app shows the net, where it is, and <b>one green button</b>.</li><li>When the net reaches you, tap <b>Received</b> (for example <b>Stitch base: received</b>).</li><li>When your step is finished, scan it again and tap <b>Done</b>.</li><li>Scan the next net.</li></ul>Steps: Cutting, Stitch base, Stitch sides, Final finishing, Packing, then Rack-in. You cannot skip a step or do it twice.' },
+  { t: 'Work orders', q: 'How do I put a finished net on the rack (Rack-in)?', k: 'rack-in rack in finished packed box stock net label',
+    a: '<ul><li>Scan the net label. The app shows the box in big letters (e.g. CL-C4-R1).</li><li>Put the net in that box and scan the <b>box label</b>. No label to scan? Tap the button with the box code.</li><li>Box full? Tap <b>Box full? Put it on top of the rack</b>.</li></ul>The net is now in stock, the same as IN.' },
+  { t: 'Work orders', q: 'What does a work order label say?', k: 'label womqd045-07/20 112326 code date number',
+    a: 'Example: <b>210x120 BLACK</b>, a barcode, <b>WOMQD045-07/20</b> and <b>112326</b>.<ul><li><b>WOMQD045</b> = door work order 45.</li><li><b>07/20</b> = net 7 of 20 in that order.</li><li><b>112326</b> = the date the label was made (month, day, year: 23 Nov 2026).</li></ul>The label stays on the net from cutting until it is in its rack box.' },
+  { t: 'Work orders', q: 'The net is damaged, or the step before was done wrong.', k: 'reject damaged torn rework send back wrong cut problem',
+    a: 'Scan the net and tap <b>Problem with this net?</b><ul><li><b>Reject</b>: the net is damaged. Tap why.</li><li><b>Send back for rework</b>: tap the step it goes back to (for example Cutting), then why. It follows the same steps again.</li></ul>' },
+  { t: 'Work orders', q: 'It says "waiting for Cutting" (or another step). What do I do?', k: 'waiting pending forgot done not received step before',
+    a: 'Someone before you did not tap <b>Done</b> (or <b>Received</b>). The app never skips a step. Give the net back to that step, or ask the manager to fix it on the Work orders page.' },
+  { t: 'Work orders', q: 'It says "Old label".', k: 'old label reprint printed again new label r2',
+    a: 'The label was printed again (the new one ends in <b>-R2</b>, -R3 ...), so the old one no longer works. Take the old label off and use the new one. Lost or torn label? Ask the manager to reprint it.' },
+  { t: 'Work orders', q: 'I tapped the wrong button.', k: 'undo wrong button mistake work order step',
+    a: 'Tap <b>Undo my last scan</b> within 15 minutes and pick why. The net goes back to where it was. Older mistakes: ask the manager.' },
+  { t: 'Work orders', q: 'No internet on the floor?', k: 'offline internet wifi waiting sync saved later',
+    a: 'Keep scanning. Every scan is saved on the phone and sent when the internet is back (the top shows <b>waiting</b>). Only making new orders needs the internet, because each order gets the next number.' },
+  { t: 'Work orders', q: 'How do I make work orders and print labels? (managers)', k: 'make order create paste list print labels new work order manager label printing today',
+    a: 'Open <b>Work orders</b>. Type the size, colour, number of nets (1 to 1000) and the due time, then <b>Make order and print labels</b>. Many at once: <b>Paste a list</b> like <b>210x120 Black 25, 210x105 Grey 16</b>, tap <b>Check the list</b>, then make them. Choose <b>Small</b> labels in the printer box. A manager can give <b>Label printing today</b> to anyone.' },
+  { t: 'Work orders', q: 'How do I fix a net, do a whole order, or reprint a label? (managers)', k: 'manager whole order all received all done change step move back fix reprint due time late',
+    a: 'Open the order on <b>Work orders</b>.<ul><li><b>All 20 received / All 20 done</b>: does that step for every net waiting there. Pick who did it first, so the nets count for that person.</li><li><b>Change</b>: puts one net at any step, or rejected, with a reason.</li><li><b>Reprint</b>: a new label; the old one stops working.</li><li><b>Due</b>: change it any time. Late orders are marked <b>Late</b>.</li></ul>' },
+  { t: 'Work orders', q: 'Where do I see who did what? (managers)', k: 'production numbers productivity who did what per person per step bottleneck download month salary',
+    a: 'Open <b>Production</b>: nets done per person and step (today, yesterday, 7 or 30 days), average minutes per net, rejects and rework, where nets pile up, late orders and on-time %. <b>Download month</b> gives an Excel file. Workers do not see these numbers.' },
 
   // ---- scan station ----
   { t: 'Scan station', q: 'How do I scan with my phone?', k: 'camera phone scan barcode usb scanner',
@@ -174,6 +198,11 @@ window.HELP_SHEET = [
     ['3', 'The app shows the box. Take the nets out.'],
     ['4', 'Tap how many (−1, −5 ...). From the top: full boxes, tap the part box, or type the nets.'],
     ['Box ran out?', 'Refill from the top: OUT off the top, then IN into the box.'] ] },
+  { h: 'Work orders: one label per net', rows: [
+    ['Scan the net', 'The app shows where it is and one green button.'],
+    ['Received, Done', 'Received when the net reaches you, Done when your step is finished.'],
+    ['Rack-in', 'Put it in the box shown, scan the box. Now it is stock.'],
+    ['Problem?', 'Reject or send back a step, with why. Old label (-R2 printed): use the new one.'] ] },
   { h: 'On the Scan station', rows: [
     ['i', 'Tap it: what this does, what you type, what changes.'],
     ['Check before saving', 'Shows the change first (e.g. Top 450 → 500). Yes saves, Back goes back. On or off for each person.'],
@@ -192,9 +221,11 @@ window.HELP_SHEET = [
     ['Scan station', 'IN and OUT. Managers: Box recount.'],
     ['Rack map', 'Every box. Tap one for its summary. Find a size.'],
     ['Refill list', 'Empty boxes to fill, nets running low.'],
-    ['Pick list', 'Paste orders. Final makes a numbered list (#1, #2 ...): Yes takes it off stock, No leaves stock. Print any list again. Picker taps Picking done.'],
+    ['Work orders', 'Managers: make orders, print labels, fix nets.'],
+    ['Production', 'Managers: who did what, where nets pile up, monthly download.'],
+    ['Pick list', 'Paste orders. Final makes list #1, #2 ... (Yes = off stock). Print again. Picker taps Picking done.'],
     ['Stock', 'Totals, box recount Apply, Excel download and upload.'],
-    ['Setup labels', 'Badges, command sheet, side signs, rack layout, shelf labels. Labels: Small 50x25 or Large 4x6.'],
+    ['Setup labels', 'Badges, side signs, rack layout, shelf labels. Small 50x25 or Large 4x6.'],
     ['Help', 'Type a question or a box code or a size.'],
     ['SHEET · synced', 'All saved. "waiting" = still sending. OFFLINE = no internet, scans wait.'] ] }
 ];

@@ -30,7 +30,12 @@
 //   nets back to stock, the list is marked "undone"). A picker confirms "Picking done" (PICKDONE: Done by / Done at, no number changes).
 //   "Yes, remove from stock" now also takes the nets off the boxes at Final (Stock column "boxes", From = which boxes, e.g.
 //   "AR-C3-R5:1,TOP:2"), so the box numbers go down at once; the pickers' OUT then only ticks the list. Older lists ("off") work as before.
-var VERSION = 11;
+// Version 12 (23 Nov 2026): door work orders (WOMQD). One label per net (WOMQD045-07/20), scanned at every step: Cutting,
+//   Stitch base, Stitch sides, Final finishing, Packing (each Received, then Done), then Rack-in (net, then box: adds stock like IN).
+//   Tabs "Work orders" (one row per order), "WO nets" (one row per net, where it is now), "Production" (every scan, never deleted)
+//   and "Production daily" (per person, per step, per day: the numbers for the managers). Reject, send back for rework,
+//   manager fixes and whole-order steps, reprint (the old label stops working), due times, label printing rights for the day.
+var VERSION = 12;
 var TOP_BOX = 25;          // a full box on top of the racks holds 25 nets
 var SNAP_TABS = ['Stock', 'Boxes', 'Counts', 'In boxes', 'Pick lists']; // what a snapshot copies and a reset or restore replaces
 var KEEP_DAYS = 30;          // daily snapshots kept this long
@@ -40,7 +45,7 @@ var LOCK_MIN = 15;          // first lock; doubles with every further lock, up t
 var LEVELS = ['Worker', 'Manager', 'Admin', 'Owner']; // Owner = the business owner: everything an admin can do, plus reset
 // Scan types that need more than Worker level. Everything else (production steps, rack-in, IN, OUT, pick, refill,
 // empty, swap, returns, undo of your own scan) is open to every signed-in worker.
-var NEEDS = { BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
+var NEEDS = { WOBULK: 'Manager', WOSET: 'Manager', WODUE: 'Manager', WORIGHT: 'Manager', BATCH: 'Manager', COUNT: 'Manager', BOXCOUNT: 'Manager', COUNTDONE: 'Manager', PICKLIST: 'Manager', PICKBACK: 'Manager', PICKUNDO: 'Manager', BOXSET: 'Manager', BOXQTY: 'Manager', WORKER: 'Admin', RESTORE: 'Admin', RESET: 'Owner' };
 
 var STAGES = ['Label printed', 'Cutting', 'Stitching · base', 'Stitching · sides', 'Final finishing', 'Packing', 'On rack'];
 var TABS = {
@@ -53,7 +58,12 @@ var TABS = {
   Counts:  ['Box', 'Net ID', 'Net', 'Qty', 'Counted at', 'By', 'Event ID', 'Part boxes'],
   'In boxes': ['Box', 'Net ID', 'Net', 'Qty', 'Updated', 'By', 'Event ID', 'Part boxes'],
   'Pick lists': ['List', 'Net ID', 'Net', 'Qty', 'Picked', 'Created', 'By', 'State', 'Updated', 'No', 'Stock', 'Note', 'Done by', 'Done at', 'From'],
-  Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row']
+  Snapshots: ['Snapshot', 'Time', 'By', 'Tab', 'Row'],
+  'Work orders': ['Order', 'Net ID', 'Net', 'Qty', 'Created', 'By', 'Due', 'State', 'Finished', 'Racked', 'Rejected', 'Note', 'Request'],
+  'WO nets': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
+  'WO nets done': ['Code', 'Order', 'No', 'Net ID', 'Step', 'Status', 'Last by', 'Last at', 'Box', 'Label', 'Received at', 'Reworks', 'Cut by', 'Base by', 'Sides by', 'Finish by', 'Pack by', 'Note'],
+  Production: ['Event ID', 'Time', 'Worker ID', 'Worker', 'Order', 'Net code', 'Net', 'Step', 'Action', 'Minutes', 'Box', 'Reason', 'Caused by', 'Entered by', 'Station', 'Before', 'After', 'Undone'],
+  'Production daily': ['Day', 'Worker ID', 'Worker', 'Step', 'Received', 'Done', 'Minutes', 'Timed', 'Rejects caused', 'Rework caused', 'First', 'Last']
 };
 // In boxes: how many nets are in each box (or TOP), one row per box + net. Put away adds, a manager's box change or an
 //   Excel upload sets it, picks take off, rack-in adds, box count Apply sets it. Stock (the total per net) already includes it.
@@ -92,6 +102,7 @@ function dailySnapshot() {
     var cut = Utilities.formatDate(new Date(t.getTime() - KEEP_DAYS * 864e5), Session.getScriptTimeZone(), 'yyyyMMdd');
     deleteWhere_('Snapshots', function (r) { var m = /^DAY-(\d{8})/.exec(String(r[0])); return m && (m[1] < cut || m[1] === day); });
     snapshot_('DAY-' + day, t, 'Daily copy');
+    woArchive_(t);
   } finally { lock.releaseLock(); }
 }
 
@@ -225,6 +236,7 @@ function person_(r, admin) {
 // ---------- read: every station pulls the shared state ----------
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  WO_ = null;
   pins_();
   var me = auth_(p.t);
   if (!me) return json_({ ok: false, auth: true, v: VERSION, error: 'Please sign in.' });
@@ -235,6 +247,10 @@ function doGet(e) {
     sr.Stock.forEach(function (r) { st[r[0]] = Number(r[2]) || 0; });
     sr['In boxes'].forEach(function (r) { ib.push({ box: String(r[0]), net: String(r[1]), qty: Number(r[3]) || 0 }); });
     return json_({ ok: true, v: VERSION, snap: String(p.snap), stock: st, shelf: ib, boxes: sr.Boxes.length, counts: sr.Counts.length });
+  }
+  if (p.prod) { // one month of production per person, per step, per day (managers): the monthly download
+    if (!mgr) return json_({ ok: false, error: 'Only a manager can download production numbers.' });
+    return json_({ ok: true, v: VERSION, month: String(p.prod), daily: prodDaily_(function (d) { return d.indexOf(String(p.prod)) === 0; }) });
   }
   var stock = {};
   rows_('Stock').forEach(function (r) { stock[r[0]] = Number(r[2]) || 0; });
@@ -267,7 +283,7 @@ function doGet(e) {
     today[r[6]] = (today[r[6]] || 0) + (Number(r[8]) || 0);
   });
   rows_('Pick lists').forEach(function (r) { if (r[1] && isDay(r[5]) && String(r[7]) !== 'undone' && String(r[10]) !== 'kept') today[r[1]] = (today[r[1]] || 0) + (Number(r[3]) || 0); }); // kept lists go out through OUT
-  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, picks: picks, outToday: today, resetAt: resetAt_(), snaps: atLeast_(me.level, 'Admin') ? snapList_() : [], at: new Date().toISOString() });
+  return json_({ ok: true, v: VERSION, me: { id: me.id, name: me.name, level: me.level, exp: me.exp }, stock: stock, batches: batches, workers: workers, log: log, rates: rates, boxes: boxes, counts: counts, shelf: shelf, picks: picks, outToday: today, resetAt: resetAt_(), snaps: atLeast_(me.level, 'Admin') ? snapList_() : [], wo: woRead_(me), at: new Date().toISOString() });
 }
 function snapList_() { // newest first: id, time, by, rows
   var o = {}, order = [];
@@ -292,8 +308,11 @@ function doPost(e) {
     var me = auth_(body.t);
     if (!me) return json_({ ok: false, auth: true, v: VERSION, error: 'Please sign in.' });
     if (body.action === 'admin') return json_(admin_(me, body));
+    WO_ = null;
+    if (body.action === 'wocreate') { var cr = woCreate_(me, body); woFlush_(); return json_(cr); }
     var scans = rows_('Scans'), seen = {}, mine = {};
     scans.slice(-2000).forEach(function (r) { seen[r[0]] = true; });
+    woSeen_(seen, mine); // work order scans live in the Production tab
     var when = {}, resetAt = resetAt_() ? new Date(resetAt_()).getTime() : 0;
     scans.slice(-500).forEach(function (r) { mine[r[0]] = String(r[3]); when[r[0]] = r[1] ? new Date(r[1]).getTime() : 0; });
     var done = [], refused = [];
@@ -301,12 +320,17 @@ function doPost(e) {
       if (!ev || !ev.id) return;
       if (!seen[ev.id]) {
         var why = allowed_(me, ev, mine) || beforeReset_(ev, when, resetAt);
+        if (!why && /^WO/.test(ev.type)) { // work orders: checked against where the net is now, so nothing is done twice
+          why = woApply_(ev, me, body.station || '');
+          if (!why) { seen[ev.id] = true; mine[ev.id] = me.id; done.push(ev.id); return; }
+        }
         if (why) { refused.push({ id: ev.id, type: ev.type, why: why }); done.push(ev.id); return; }
         if (ev.type === 'WORKER') ev.by = me.id; else ev.who = me.id; // the name on every scan is the person signed in
         apply_(ev, body.station || ''); seen[ev.id] = true; mine[ev.id] = me.id;
       }
       done.push(ev.id);
     });
+    woFlush_();
     return json_({ ok: true, saved: done, refused: refused });
   } finally {
     lock.releaseLock();
@@ -323,6 +347,7 @@ function allowed_(me, ev, mine) {
 // After a reset, scans made before it (a phone that was offline, or an undo of an old scan) must not bring old numbers back.
 function beforeReset_(ev, when, resetAt) {
   if (!resetAt || ev.type === 'WORKER') return null;
+  if (/^WO/.test(ev.type) && !(ev.type === 'WOSTEP' && ev.act === 'RACKIN')) return null; // production steps do not change stock; only a rack-in does
   if (ev.t && new Date(ev.t).getTime() < resetAt) return 'This scan was made before the inventory was reset, so it was not saved.';
   if (ev.type === 'UNDO' && ev.undoes && when[ev.undoes] != null && when[ev.undoes] < resetAt) return 'That scan was before the reset, so it cannot be undone.';
   return null;
@@ -662,4 +687,321 @@ function restore_(ev, t) {
   });
   PropertiesService.getScriptProperties().setProperty('RESET_AT', t.toISOString());
   if (row) sheet_('Scans').getRange(row.row, 12).setValue('Inventory restored from ' + ev.snap + ' (' + n + ' rows) · copy of before: ' + id + (ev.reason ? ' · reason: ' + ev.reason : ''));
+}
+
+// ---------- work orders: door nets (version 12) ----------
+// One work order = one size + one colour, 1 to 1000 nets. Every net has its own label: WOMQD045-07/20 = door order 45, net 7 of 20.
+// A reprinted label gets "-R2", "-R3" ...; the older label then stops working. Each net goes through the steps below. At Cutting to
+// Packing a worker scans Received, then Done. Rack-in: scan the net, then the box; the net is added to stock like IN.
+// Every scan is a row in Production (never deleted) and adds up in Production daily (per person, per step, per day).
+var WO_STEPS = ['Cutting', 'Stitch base', 'Stitch sides', 'Final finishing', 'Packing', 'Rack-in'];
+var WO_RACK = 5;          // step number of Rack-in; a racked net has step 6
+var WO_MAX = 1000;        // nets in one order
+var WO_KEEP_DAYS = 14;    // a finished order's net rows move to "WO nets done" after this many days (Production keeps everything)
+var WO_ = null;           // this request's copy of the work order tabs, written back once at the end (fast for 1000 nets)
+var WO_N = TABS['WO nets'].length, WO_O = TABS['Work orders'].length, WO_P = TABS.Production.length, WO_D = TABS['Production daily'].length;
+
+function pad_(n, w) { var s = String(n); while (s.length < w) s = '0' + s; return s; }
+function woCode_(no) { return 'WOMQD' + pad_(no, 3); }
+function woNetCode_(order, k, qty) { return order + '-' + pad_(k, Math.max(2, String(qty).length)) + '/' + qty; }
+function woParse_(code) { // "WOMQD045-07/20-R2" -> { base: "WOMQD045-07/20", order: "WOMQD045", label: 2 }
+  var m = /^(WOMQD\d{3,})-(\d+)\/(\d+)(?:-R(\d+))?$/.exec(String(code || '').trim().toUpperCase());
+  return m ? { base: m[1] + '-' + m[2] + '/' + m[3], order: m[1], label: m[4] ? Number(m[4]) : 1 } : null;
+}
+function day_(t) { return Utilities.formatDate(t, Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+function dk_(v) { return v && typeof v.getTime === 'function' ? day_(v) : String(v == null ? '' : v).replace(/^'/, '').slice(0, 10); } // the Day column, written as text
+function ensureRows_(sh, last) { if (sh.getMaxRows && sh.getMaxRows() < last) sh.insertRowsAfter(sh.getMaxRows(), last - sh.getMaxRows()); }
+function woLoad_() {
+  if (WO_) return WO_;
+  var r = rows_('WO nets'), o = rows_('Work orders'), idx = {}, byOrder = {}, oidx = {};
+  r.forEach(function (x, i) { if (!x[0]) return; idx[x[0]] = i; (byOrder[x[1]] = byOrder[x[1]] || []).push(i); });
+  o.forEach(function (x, i) { if (x[0]) oidx[x[0]] = i; });
+  WO_ = { r: r, n0: r.length, idx: idx, byOrder: byOrder, dirty: {}, o: o, o0: o.length, oidx: oidx, odirty: {}, prod: [], daily: null, ddirty: {}, undone: [], oupd: {} };
+  return WO_;
+}
+function writeRows_(name, rows, dirty, width) { // write the changed rows back, joined into blocks of rows next to each other
+  var sh = sheet_(name), ks = Object.keys(dirty).map(Number).sort(function (a, b) { return a - b; });
+  if (!ks.length) return;
+  ensureRows_(sh, ks[ks.length - 1] + 2);
+  for (var i = 0; i < ks.length;) {
+    var j = i; while (j + 1 < ks.length && ks[j + 1] === ks[j] + 1) j++;
+    sh.getRange(ks[i] + 2, 1, j - i + 1, width).setValues(rows.slice(ks[i], ks[j] + 1));
+    i = j + 1;
+  }
+}
+function woFlush_() {
+  var W = WO_; if (!W) return;
+  Object.keys(W.oupd).forEach(function (o) { woOrderCount_(o, W.oupd[o]); });
+  writeRows_('WO nets', W.r, W.dirty, WO_N);
+  writeRows_('Work orders', W.o, W.odirty, WO_O);
+  if (W.daily) writeRows_('Production daily', W.daily.rows, W.ddirty, WO_D);
+  var P = sheet_('Production');
+  if (W.undone.length) { var ur = P.getLastRow(); W.undone.forEach(function (u) { if (u.row <= ur) P.getRange(u.row, WO_P).setValue(u.t); }); }
+  if (W.prod.length) { var last = P.getLastRow(); ensureRows_(P, last + 1 + W.prod.length); P.getRange(last + 1, 1, W.prod.length, WO_P).setValues(W.prod); }
+  WO_ = null;
+}
+function woSeen_(seen, mine) { // ids of the last work order scans (an event saved twice is applied once), and who entered them
+  var P = sheet_('Production'), n = P.getLastRow(); if (n < 2) return;
+  var k = Math.min(n - 1, 5000), v = P.getRange(n - k + 1, 1, k, 14).getValues();
+  v.forEach(function (r) { var id = String(r[0]).split('#')[0]; if (id) { seen[id] = true; mine[id] = String(r[13]); } });
+}
+// label printing rights for the day: a manager gives them to anyone (e.g. whoever is at the computer today)
+function rights_() { try { var x = JSON.parse(PropertiesService.getScriptProperties().getProperty('LABEL_RIGHTS') || '{}'); return x.day === day_(new Date()) ? (x.ids || []) : []; } catch (e) { return []; } }
+function canLabels_(me) { return atLeast_(me.level, 'Manager') || rights_().indexOf(me.id) >= 0; }
+function rightsSet_(id, on) {
+  var ids = rights_().filter(function (x) { return x !== id; }); if (on) ids.push(id);
+  PropertiesService.getScriptProperties().setProperty('LABEL_RIGHTS', JSON.stringify({ day: day_(new Date()), ids: ids }));
+}
+// net row: 0 Code, 1 Order, 2 No, 3 Net ID, 4 Step, 5 Status (wait / recv / rejected / racked), 6 Last by, 7 Last at, 8 Box, 9 Label,
+//   10 Received at, 11 Reworks, 12-16 who did Cutting ... Packing, 17 Note (why rejected or sent back)
+function woState_(r) { return [Number(r[4]) || 0, String(r[5] || 'wait')]; }
+function woSay_(r) { // where the net is, in plain words
+  var s = Number(r[4]) || 0, st = String(r[5] || 'wait'), who = r[6] ? workerName_(r[6]) : '';
+  if (st === 'racked') return 'already on the rack' + (r[8] ? ' in ' + r[8] : '');
+  if (st === 'rejected') return 'rejected' + (r[17] ? ' (' + r[17] + ')' : '');
+  if (st === 'recv') return 'already received at ' + WO_STEPS[s] + (who ? ' by ' + who : '');
+  return 'waiting for ' + (s === WO_RACK ? 'Rack-in' : WO_STEPS[s]) + (who && s ? ' (last step by ' + who + ')' : '');
+}
+function prodRow_(ev, t, who, r, step, action, extra) {
+  var x = extra || {};
+  return [x.id || ev.id, t, who, workerName_(who), r[1], r[0], r[3], step == null ? '' : (WO_STEPS[step] || 'On rack'), action, x.min == null ? '' : x.min, x.box || '', ev.reason || '',
+    x.caused || '', ev.who || '', x.station || '', x.before ? JSON.stringify(x.before) : '', x.after ? JSON.stringify(x.after) : '', ''];
+}
+function dailyLoad_() {
+  var W = woLoad_(); if (W.daily) return W.daily;
+  var rows = rows_('Production daily'), idx = {};
+  rows.forEach(function (r, i) { if (r[0]) idx[dk_(r[0]) + '|' + r[1] + '|' + r[3]] = i; });
+  W.daily = { rows: rows, idx: idx }; return W.daily;
+}
+// add to the numbers of one person at one step on one day. f: 4 Received, 5 Done, 8 Rejects caused, 9 Rework caused
+function daily_(t, who, step, f, d, min) {
+  if (!who || step == null || step < 0) return;
+  var D = dailyLoad_(), day = day_(t), name = WO_STEPS[step] || 'On rack', k = day + '|' + who + '|' + name, i = D.idx[k];
+  if (i == null) { if (d < 0) return; i = D.rows.length; D.idx[k] = i; D.rows.push(["'" + day, who, workerName_(who), name, 0, 0, 0, 0, 0, 0, '', '']); }
+  var r = D.rows[i];
+  r[f] = Math.max(0, (Number(r[f]) || 0) + d);
+  if (min != null && min !== '') { r[6] = Math.max(0, Math.round(((Number(r[6]) || 0) + d * Number(min)) * 10) / 10); r[7] = Math.max(0, (Number(r[7]) || 0) + d); }
+  if (d > 0 && f < 8) { if (!r[10] || new Date(r[10]) > t) r[10] = t; if (!r[11] || new Date(r[11]) < t) r[11] = t; }
+  WO_.ddirty[i] = 1;
+}
+function prodDaily_(test) {
+  return rows_('Production daily').filter(function (r) { return r[0] && test(dk_(r[0])); }).map(function (r) {
+    return { day: dk_(r[0]), who: String(r[1]), name: String(r[2]), step: String(r[3]), recv: Number(r[4]) || 0, done: Number(r[5]) || 0, min: Number(r[6]) || 0, timed: Number(r[7]) || 0, rej: Number(r[8]) || 0, rework: Number(r[9]) || 0, first: iso_(r[10]), last: iso_(r[11]) };
+  });
+}
+function woSet_(i, row) { WO_.r[i] = row; WO_.dirty[i] = 1; }
+function woOrderUpdate_(order, t) { woLoad_().oupd[order] = t; } // counted once, when the changes are written
+function woOrderCount_(order, t) { // racked / rejected counts; the order is done when every net is on the rack or rejected
+  var W = WO_, oi = W.oidx[order]; if (oi == null) return;
+  var o = W.o[oi], racked = 0, rej = 0, all = (W.byOrder[order] || []).length;
+  (W.byOrder[order] || []).forEach(function (i) { var st = String(W.r[i][5]); if (st === 'racked') racked++; else if (st === 'rejected') rej++; });
+  var done = all > 0 && racked + rej === all;
+  o[9] = racked; o[10] = rej;
+  if (done && o[7] !== 'done') { o[7] = 'done'; o[8] = t; } else if (!done && o[7] === 'done') { o[7] = 'open'; o[8] = ''; }
+  W.odirty[oi] = 1;
+}
+// one step for one net. Returns null when saved, otherwise why not.
+function woOne_(ev, t, i, who, act, extra) {
+  var W = woLoad_(), r = W.r[i].slice(), before = W.r[i].slice(4), s = Number(r[4]) || 0, st = String(r[5] || 'wait'), x = extra || {}, min = null, caused = '', step = s, action, box = '';
+  if (act === 'RECV') {
+    if (st !== 'wait' || s >= WO_RACK) return r[0] + ' is ' + woSay_(r) + '.';
+    r[5] = 'recv'; r[10] = t; action = 'Received';
+  } else if (act === 'DONE') {
+    if (st !== 'recv' || s >= WO_RACK) return r[0] + ' is ' + woSay_(r) + '.';
+    if (r[10]) min = Math.round((t.getTime() - new Date(r[10]).getTime()) / 6000) / 10;
+    if (min != null && (min < 0 || min > 24 * 60)) min = null; // a time over a day is not a working time: not counted in the average
+    r[12 + s] = who; r[4] = s + 1; r[5] = 'wait'; r[10] = ''; action = 'Done';
+  } else if (act === 'RACKIN') {
+    if (st !== 'wait' || s !== WO_RACK) return r[0] + ' is ' + woSay_(r) + '.';
+    box = String(ev.loc || '').toUpperCase(); if (box === '2F') box = 'TOP';
+    if (!box) return 'Scan the box the net goes into.';
+    r[4] = 6; r[5] = 'racked'; r[8] = box; action = 'Rack-in';
+  } else if (act === 'REJECT') {
+    if (st !== 'wait' && st !== 'recv') return r[0] + ' is ' + woSay_(r) + '.';
+    if (!ev.reason) return 'Say why the net is rejected.';
+    caused = s > 0 ? String(r[12 + s - 1] || '') : ''; r[5] = 'rejected'; r[17] = ev.reason; r[10] = ''; action = 'Reject';
+  } else if (act === 'BACK') {
+    var to = Math.round(Number(ev.to));
+    if (st !== 'wait' && st !== 'recv') return r[0] + ' is ' + woSay_(r) + '.';
+    if (!(to >= 0 && to < s) || s > WO_RACK) return 'A net can only go back to an earlier step.';
+    if (!ev.reason) return 'Say why the net goes back.';
+    caused = String(r[12 + to] || ''); for (var k = to; k < 5; k++) r[12 + k] = '';
+    r[4] = to; r[5] = 'wait'; r[10] = ''; r[11] = (Number(r[11]) || 0) + 1; r[17] = ev.reason; action = 'Rework';
+  } else return 'Unknown step.';
+  r[6] = who; r[7] = t;
+  woSet_(i, r);
+  W.prod.push(prodRow_(ev, t, who, r, step, action, { id: x.id, min: min, box: box, caused: caused, station: x.station, before: before, after: woState_(r) }));
+  if (act === 'RECV') daily_(t, who, s, 4, 1);
+  if (act === 'DONE') daily_(t, who, s, 5, 1, min);
+  if (act === 'RACKIN') daily_(t, who, WO_RACK, 5, 1);
+  if (caused) daily_(t, caused, act === 'BACK' ? Math.round(Number(ev.to)) : s - 1, act === 'BACK' ? 9 : 8, 1);
+  if (act === 'RACKIN') { // into stock, the same way as IN: the total and the box number go up
+    stock_(r[3], '', 1, 'add', 'Rack-in ' + r[0], t);
+    countAdd_(box, r[3], '', 1, false, t, who, ev.id, 'In boxes');
+    if (box !== 'TOP') { var bx = findRow_('Boxes', box); if (bx && bx.values[1] === 'empty') box_(box, 'full', r[3], r[1], '', t, who); }
+    sheet_('Scans').appendRow([ev.id, t, 'WOIN', who, workerName_(who), r[1], r[3], '', 1, '', box, 'Rack-in ' + r[0], x.station || '', '']);
+  }
+  woOrderUpdate_(r[1], t);
+  return null;
+}
+function woApply_(ev, me, station) {
+  var t = ev.t ? new Date(ev.t) : new Date(), W = woLoad_();
+  ev.who = me.id;
+  if (ev.type === 'WOSTEP') {
+    var c = woParse_(ev.code), i = c ? W.idx[c.base] : null;
+    if (i == null) return 'Work order net ' + (ev.code || '') + ' not found.';
+    if (c.label < (Number(W.r[i][9]) || 1)) return 'Old label ' + ev.code + ': it was printed again, use the new label.';
+    var cur = woState_(W.r[i]);
+    if (ev.from && (Number(ev.from[0]) !== cur[0] || String(ev.from[1]) !== cur[1])) return W.r[i][0] + ' is ' + woSay_(W.r[i]) + '.';
+    return woOne_(ev, t, i, me.id, ev.act, { station: station });
+  }
+  if (ev.type === 'WOBULK') { // a manager does a whole order (or the nets ticked) at once, for the person who did the work
+    var list = (W.byOrder[ev.order] || []).slice(), want = ev.nos ? {} : null, n = 0, who = ev['for'] ? String(ev['for']) : me.id, s0 = Number(ev.step);
+    if (!list.length) return 'Work order ' + ev.order + ' not found.';
+    if (ev['for'] && !findRow_('Workers', badge_(who))) return 'Unknown employee number ' + who + '.';
+    who = badge_(who);
+    if (ev.act !== 'RECV' && ev.act !== 'DONE') return 'Only Received or Done can be done for a whole order.';
+    if (want) ev.nos.forEach(function (k) { want[Number(k)] = 1; });
+    list.forEach(function (j) {
+      var r = W.r[j], st = woState_(r);
+      if (want && !want[Number(r[2])]) return;
+      if (st[0] !== s0 || st[1] !== (ev.act === 'RECV' ? 'wait' : 'recv')) return;
+      if (!woOne_(ev, t, j, who, ev.act, { id: ev.id + '#' + (++n), station: station })) return;
+    });
+    if (!n) return 'No net of ' + ev.order + ' is waiting for that step.';
+    return null;
+  }
+  if (ev.type === 'WOSET') { // a manager puts nets at a step (move back, fix a wrong scan, bring a rejected net back)
+    var to = Math.round(Number(ev.step)), sto = String(ev.status || 'wait'), m = 0;
+    if (!(to >= 0 && to <= WO_RACK) || ['wait', 'recv', 'rejected'].indexOf(sto) < 0 || (sto === 'recv' && to >= WO_RACK)) return 'Pick a step.';
+    if (!ev.reason) return 'Say why.';
+    (ev.codes || []).forEach(function (code) {
+      var p = woParse_(code), j = p ? W.idx[p.base] : null; if (j == null) return;
+      var r = W.r[j].slice(), before = r.slice(4);
+      if (String(r[5]) === 'racked') return; // on the rack: that is stock now (undo the rack-in, or use OUT)
+      if (sto !== 'rejected') { for (var k = to; k < 5; k++) r[12 + k] = ''; r[4] = to; }
+      r[5] = sto; r[10] = sto === 'recv' ? t : ''; r[6] = me.id; r[7] = t; r[17] = sto === 'rejected' ? ev.reason : r[17];
+      woSet_(j, r);
+      W.prod.push(prodRow_(ev, t, me.id, r, Number(r[4]), 'Fix: ' + (sto === 'rejected' ? 'rejected' : (sto === 'recv' ? 'received at ' : 'waiting for ') + WO_STEPS[to]), { id: ev.id + '#' + (++m), station: station, before: before, after: woState_(r) }));
+      woOrderUpdate_(r[1], t);
+    });
+    if (!m) return 'Nothing to change (nets on the rack are stock: undo the rack-in or use OUT).';
+    return null;
+  }
+  if (ev.type === 'WOREPRINT') { // a new label for a lost or torn one: the old label stops working
+    if (!canLabels_(me)) return 'Only a manager, or someone with label printing today, can print labels.';
+    var q = woParse_(ev.code), ri = q ? W.idx[q.base] : null; if (ri == null) return 'Work order net ' + (ev.code || '') + ' not found.';
+    var rr = W.r[ri].slice(), lab = Math.max(Number(rr[9]) || 1, Math.round(Number(ev.label) || 0));
+    if (lab <= (Number(rr[9]) || 1)) return null; // already printed again
+    rr[9] = lab; woSet_(ri, rr);
+    W.prod.push(prodRow_(ev, t, me.id, rr, null, 'Reprint label ' + lab, { station: station }));
+    return null;
+  }
+  if (ev.type === 'WODUE') {
+    var oi = W.oidx[ev.order]; if (oi == null) return 'Work order ' + ev.order + ' not found.';
+    W.o[oi][6] = ev.due ? new Date(ev.due) : ''; W.odirty[oi] = 1;
+    W.prod.push([ev.id, t, me.id, workerName_(me.id), ev.order, '', W.o[oi][1], '', 'Due ' + (ev.due ? Utilities.formatDate(new Date(ev.due), Session.getScriptTimeZone(), 'dd MMM HH:mm') : 'none'), '', '', ev.reason || '', '', me.id, station, '', '', '']);
+    return null;
+  }
+  if (ev.type === 'WORIGHT') {
+    var b = badge_(ev.badge); if (!findRow_('Workers', b)) return 'Unknown employee number ' + ev.badge + '.';
+    rightsSet_(b, !!ev.on);
+    W.prod.push([ev.id, t, b, workerName_(b), '', '', '', '', ev.on ? 'Label printing today: given' : 'Label printing today: taken away', '', '', '', '', me.id, station, '', '', '']);
+    return null;
+  }
+  if (ev.type === 'WOUNDO') return woUndo_(ev, me, t, station);
+  return 'Unknown work order scan.';
+}
+// undo a work order scan (your own, within 15 minutes on your phone; a manager any): the net goes back to where it was,
+// the person's numbers go down again, and a rack-in comes off stock and the box
+function woUndo_(ev, me, t, station) {
+  var W = woLoad_(), P = sheet_('Production'), n = P.getLastRow(); if (n < 2) return 'Nothing to undo.';
+  var k = Math.min(n - 1, 5000), first = n - k + 1, v = P.getRange(first, 1, k, WO_P).getValues(), hit = [];
+  v.forEach(function (r, j) { var id = String(r[0]); if (id === ev.undoes || id.indexOf(ev.undoes + '#') === 0) hit.push({ r: r, row: first + j }); });
+  if (!hit.length) return 'That scan is not saved yet, or too old to undo.';
+  if (!atLeast_(me.level, 'Manager') && hit.some(function (h) { return String(h.r[13]) !== me.id; })) return 'You can undo only your own scans.';
+  if (!atLeast_(me.level, 'Manager') && hit.some(function (h) { return t.getTime() - new Date(h.r[1]).getTime() > 20 * 60000; })) return 'Too late to undo (15 minutes). Ask a manager.';
+  if (hit.some(function (h) { return h.r[17]; })) return 'That scan was already undone.';
+  var bad = hit.filter(function (h) { var j = W.idx[h.r[5]]; return h.r[15] && (j == null || JSON.stringify(woState_(W.r[j])) !== String(h.r[16])); });
+  if (bad.length) return 'Cannot undo: ' + bad[0].r[5] + ' has moved on since then.';
+  hit.reverse().forEach(function (h) {
+    var x = h.r, j = W.idx[x[5]], when = new Date(x[1]), step = WO_STEPS.indexOf(String(x[7]));
+    if (j != null && x[15]) { var r = W.r[j].slice(0, 4).concat(JSON.parse(x[15])); while (r.length < WO_N) r.push(''); woSet_(j, r); woOrderUpdate_(r[1], t); }
+    if (x[8] === 'Received') daily_(when, String(x[2]), step, 4, -1);
+    if (x[8] === 'Done') daily_(when, String(x[2]), step, 5, -1, x[9] === '' ? null : Number(x[9]));
+    if (x[8] === 'Rack-in') daily_(when, String(x[2]), WO_RACK, 5, -1);
+    if (x[12]) daily_(when, String(x[12]), x[8] === 'Rework' ? JSON.parse(x[16])[0] : step - 1, x[8] === 'Rework' ? 9 : 8, -1);
+    if (x[8] === 'Rack-in') {
+      stock_(String(x[6]), '', -1, 'add', 'Undo rack-in ' + x[5], t);
+      takeOff_(String(x[10]), String(x[6]), 1, t, me.id, ev.id);
+      var sr = findRow_('Scans', x[0]); if (sr && String(sr.values[11]).indexOf(' · UNDONE') < 0) sheet_('Scans').getRange(sr.row, 12).setValue(String(sr.values[11]) + ' · UNDONE');
+      sheet_('Scans').appendRow([ev.id, t, 'WOUNDO', me.id, workerName_(me.id), x[4], x[6], '', -1, '', x[10], 'Undo rack-in ' + x[5] + (ev.reason ? ' · reason: ' + ev.reason : ''), station, ev.reason || '']);
+    }
+    W.undone.push({ row: h.row, t: t });
+    W.prod.push([ev.id + (hit.length > 1 ? '#' + h.row : ''), t, me.id, workerName_(me.id), x[4], x[5], x[6], x[7], 'Undo ' + x[8], '', x[10], ev.reason || '', '', me.id, station, '', '', '']);
+  });
+  return null;
+}
+// make orders (manager, or label printing today). Each order gets the next number; one row per net, all written at once.
+function woCreate_(me, body) {
+  if (!canLabels_(me)) return { ok: false, error: 'Only a manager, or someone the manager gave label printing today, can make work orders.' };
+  var W = woLoad_(), req = String(body.req || ''), t = new Date(), list = body.orders || [], out = [];
+  if (req) { // the same request sent again (the answer got lost): give back the orders it made, never make them twice
+    W.o.forEach(function (o) { if (String(o[12]) === req) out.push(woOrderOut_(o)); });
+    if (out.length) return { ok: true, v: VERSION, orders: out, again: true };
+  }
+  if (!list.length || list.length > 100) return { ok: false, error: 'Make 1 to 100 orders at a time.' };
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i], q = Math.round(Number(o.qty));
+    if (!/^DN-\d{3}x\d{2,3}-(BK|BR|GR)$/.test(String(o.net || ''))) return { ok: false, error: 'Line ' + (i + 1) + ': not a door net.' };
+    if (!(q >= 1 && q <= WO_MAX)) return { ok: false, error: 'Line ' + (i + 1) + ': an order has 1 to ' + WO_MAX + ' nets.' };
+  }
+  var pr = PropertiesService.getScriptProperties(), no = Number(pr.getProperty('WO_SEQ_MQD')) || 0;
+  W.o.forEach(function (o) { var m = /^WOMQD(\d+)$/.exec(String(o[0])); if (m) no = Math.max(no, Number(m[1])); });
+  list.forEach(function (o) {
+    var q = Math.round(Number(o.qty)), code = woCode_(++no), due = o.due ? new Date(o.due) : '';
+    var row = [code, o.net, o.netName || '', q, t, workerName_(me.id), due && !isNaN(due.getTime()) ? due : '', 'open', '', 0, 0, String(o.note || '').slice(0, 100), req];
+    W.oidx[code] = W.o.length; W.odirty[W.o.length] = 1; W.o.push(row);
+    W.byOrder[code] = [];
+    for (var k = 1; k <= q; k++) {
+      var nr = [woNetCode_(code, k, q), code, k, o.net, 0, 'wait', '', '', '', 1, '', 0, '', '', '', '', '', ''];
+      W.idx[nr[0]] = W.r.length; W.byOrder[code].push(W.r.length); W.dirty[W.r.length] = 1; W.r.push(nr);
+    }
+    W.prod.push([body.req ? req + '-' + code : 'MK-' + code, t, me.id, workerName_(me.id), code, '', o.net, '', 'Order made: ' + q + ' nets, labels printed', '', '', '', '', me.id, body.station || '', '', '', '']);
+    out.push(woOrderOut_(row));
+  });
+  pr.setProperty('WO_SEQ_MQD', String(no));
+  return { ok: true, v: VERSION, orders: out };
+}
+function woOrderOut_(o) { return { id: String(o[0]), net: String(o[1]), qty: Number(o[3]) || 0, created: iso_(o[4]), by: String(o[5] || ''), due: iso_(o[6]), state: String(o[7] || 'open'), finished: iso_(o[8]), racked: Number(o[9]) || 0, rejected: Number(o[10]) || 0, note: String(o[11] || '') }; }
+// what the phones get: open orders with every net (where it is, who has it), and orders finished in the last 30 days.
+// Managers also get the last 35 days of production numbers. Workers never get the numbers per person.
+function woRead_(me) {
+  var W = woLoad_(), now = Date.now(), out = [];
+  W.o.forEach(function (o) {
+    if (!o[0]) return;
+    var fin = o[8] ? new Date(o[8]).getTime() : 0;
+    if (String(o[7]) === 'done' && now - fin > 30 * 864e5) return;
+    var x = woOrderOut_(o);
+    if (String(o[7]) !== 'done' || now - fin < 3 * 864e5) x.nets = (W.byOrder[o[0]] || []).map(function (i) {
+      var r = W.r[i]; // [no, step, status, last by, last at, box, label, reworks, done by Cutting ... Packing, note]
+      return [Number(r[2]), Number(r[4]) || 0, String(r[5] || 'wait'), String(r[6] || ''), iso_(r[7]), String(r[8] || ''), Number(r[9]) || 1, Number(r[11]) || 0, [r[12], r[13], r[14], r[15], r[16]].map(String), String(r[17] || '')];
+    });
+    out.push(x);
+  });
+  var mgr = atLeast_(me.level, 'Manager'), since = day_(new Date(now - 35 * 864e5));
+  return { orders: out, rights: { me: canLabels_(me), ids: mgr ? rights_() : [] }, daily: mgr ? prodDaily_(function (d) { return d >= since; }) : [] };
+}
+// every night: the net rows of orders finished more than 14 days ago move to "WO nets done" (Production keeps every scan)
+function woArchive_(t) {
+  var W = woLoad_(), old = {}, keep = [], move = [];
+  W.o.forEach(function (o) { if (String(o[7]) === 'done' && o[8] && t.getTime() - new Date(o[8]).getTime() > WO_KEEP_DAYS * 864e5) old[o[0]] = 1; });
+  if (!Object.keys(old).length) { WO_ = null; return; }
+  W.r.forEach(function (r) { if (!r[0]) return; (old[r[1]] ? move : keep).push(r); });
+  WO_ = null;
+  if (!move.length) return;
+  var D = sheet_('WO nets done'), dl = D.getLastRow(); ensureRows_(D, dl + 1 + move.length); D.getRange(dl + 1, 1, move.length, WO_N).setValues(move);
+  var sh = sheet_('WO nets'), n = sh.getLastRow();
+  if (n > 1) sh.getRange(2, 1, n - 1, WO_N).clearContent();
+  if (keep.length) sh.getRange(2, 1, keep.length, WO_N).setValues(keep);
 }

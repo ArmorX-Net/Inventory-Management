@@ -319,7 +319,7 @@ const STEPS = [
   S = await st();
   expect('owner reset: every net 0, boxes, counts and put aways cleared, log kept with a RESET line', Object.keys(S.stock).length === 0 && !Object.keys(S.boxes).length && !Object.keys(S.shelf).length && !Object.keys(S.counts).length && S.log[0].type === 'RESET' && S.log.length > 5);
 
-  for (const tab of ['dashboard', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'people', 'settings']) {
+  for (const tab of ['dashboard', 'orders', 'production', 'pick', 'batches', 'stock', 'racks', 'refill', 'print', 'log', 'people', 'settings']) {
     await page.evaluate((t) => { location.hash = t; }, tab);
     await page.waitForTimeout(150);
   }
@@ -483,7 +483,7 @@ const STEPS = [
   expect('help: a size shows its boxes', /Size 210x100 Black/.test(await p6.textContent('#hOut summary')) && /AR-C1-R3/.test(await p6.textContent('#hOut details')));
   expect('help: nonsense says no answer found', (await ask('zzqq')).length === 0 && /No answer found/.test(await p6.textContent('#hOut')));
   await p6.click('#hPrint');
-  expect('cheat sheet prints on A4 portrait with every section', /A4 portrait/.test(await p6.textContent('#page-size')) && (await p6.$$('#print-area .cheat section')).length === 7);
+  expect('cheat sheet prints on A4 portrait with every section', /A4 portrait/.test(await p6.textContent('#page-size')) && (await p6.$$('#print-area .cheat section')).length === 8);
   await p6.goto('file://' + path.join(__dirname, '..', 'index.html') + '#racks'); await p6.click('[data-b="AL-C5-R3"]');
   expect('rack map box says "holds 20"', /holds 20/.test(await p6.textContent('#boxInfo')));
   await p6.click('#boxInfo a[href^="#help"]'); await p6.waitForSelector('#hq');
@@ -563,6 +563,77 @@ const STEPS = [
   expect('the pop-up lines add up to the total', await p7.$eval('#boxInfo', (e) => e.querySelector('.pop-tot b').textContent === e.querySelector('.pl.sum b').textContent));
   expect('rack pop-up fits the phone', (await p7.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await p7.close();
+
+  // ---- door work orders (owner 23 Nov 2026): make an order, labels, one button per step, rack-in into stock, undo, problems ----
+  const p8 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  p8.on('pageerror', (e) => errors.push(e.message));
+  await p8.route(/google|googleapis|gstatic/, (r) => r.abort());
+  const ws = JSON.parse(JSON.stringify(STATE)); ws.stock = {}; ws.shelf = {}; ws.batches = {};
+  await p8.addInitScript((s) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('armorx-inv-v1', s); sessionStorage.setItem('seeded', '1'); } window.print = () => {}; }, JSON.stringify(ws));
+  await p8.goto('file://' + path.join(__dirname, '..', 'index.html') + '#orders'); await p8.waitForSelector('#woNew');
+  const S8 = () => p8.evaluate(() => JSON.parse(localStorage.getItem('armorx-inv-v1')));
+  const WN = 'DN-210x120-BK';
+  await p8.fill('#woSize', '210x120'); await p8.selectOption('#woCol', 'Black'); await p8.fill('#woQty', '2'); await p8.click('#woNew button');
+  await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="S"]');
+  const wl = await p8.$$eval('#print-area .lbl-wo', (l) => l.map((e) => ({ net: e.querySelector('.wl-net').textContent, code: e.querySelector('.wl-code').textContent, bars: !!e.querySelector('svg.bc rect, svg.bc path') })));
+  expect('work order: 2 labels, one per net: size + colour, barcode, code and date', wl.length === 2 && wl[0].net === '210x120 BLACK' && /^WOMQD001-01\/2\d{6}$/.test(wl[0].code) && wl[0].bars && (await p8.getAttribute('#print-area', 'class')) === 'lbl-S');
+  await p8.fill('#woPaste', '210x120 Grey 3, 205x90 BRW 4\nnonsense 5'); await p8.click('#woCheck');
+  expect('paste a list: 2 lines read, 1 left out', /Make 2 orders and print 7 labels/.test(await p8.textContent('#woPrev')) && /1 line cannot be read/.test(await p8.textContent('#woPrev')));
+  await p8.click('#woGo'); await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="S"]');
+  expect('the pasted list makes WOMQD002 and WOMQD003', !!(await S8()).wo.orders.WOMQD003 && (await S8()).wo.orders.WOMQD003.qty === 4);
+  await p8.evaluate(() => { location.hash = 'scan'; }); await p8.waitForSelector('#scanIn');
+  const scan8 = async (c) => { await p8.fill('#scanIn', c); await p8.press('#scanIn', 'Enter'); await p8.waitForTimeout(60); return p8.textContent('#fb'); };
+  const C1 = 'WOMQD001-01/2';
+  await scan8(C1);
+  expect('a net label shows only its next step: one button, Cutting: received', (await p8.$$('[data-wo]')).length === 1 && (await p8.textContent('[data-wo]')) === 'Cutting: received' && /Waiting for Cutting/.test(await p8.textContent('.wo-now')));
+  await p8.click('[data-wo]');
+  expect('tap: saved, the card closes, scan the next net', /Cutting: received/.test(await p8.textContent('#fb')) && !(await p8.$('.wo-card')) && (await S8()).wo.orders.WOMQD001.nets[1].st === 'recv');
+  await scan8(C1);
+  expect('scanned again: now Cutting: done', (await p8.textContent('[data-wo]')) === 'Cutting: done');
+  await p8.click('[data-wo]');
+  for (let k = 1; k < 5; k++) { await scan8(C1); await p8.click('[data-wo]'); await scan8(C1); await p8.click('[data-wo]'); }
+  await scan8(C1);
+  const box8 = await p8.textContent('.wo-card .pa-loc');
+  expect('rack-in: the app shows the box for the net', box8 === 'CL-C4-R1' && /Scan the box label/.test(await p8.textContent('#fb')));
+  expect('a wrong box is refused', /Wrong box/.test(await scan8('AL-C1-R1')) && (await S8()).wo.orders.WOMQD001.nets[1].st === 'wait');
+  await scan8(box8);
+  let w8 = await S8();
+  expect('box scanned: the net is on the rack, stock +1 and the box +1 (like IN)', w8.wo.orders.WOMQD001.nets[1].st === 'racked' && w8.stock[WN] === 1 && w8.shelf[box8 + '|' + WN].qty === 1);
+  expect('every person\'s step is kept on the net', w8.wo.orders.WOMQD001.nets[1].db.every((x) => x === 'EMP-06'));
+  await p8.click('[data-undo]'); await p8.click('[data-why="Wrong box"]');
+  w8 = await S8();
+  expect('undo rack-in: stock and box back, the net waits for Rack-in again', w8.stock[WN] === 0 && !w8.shelf[box8 + '|' + WN] && w8.wo.orders.WOMQD001.nets[1].st === 'wait' && w8.wo.orders.WOMQD001.nets[1].step === 5);
+  await scan8(C1); await p8.click('[data-wo-box="TOP"]');
+  w8 = await S8();
+  expect('box full: tap to put it on top of the rack', w8.shelf['TOP|' + WN].qty === 1 && w8.stock[WN] === 1);
+  await scan8(C1);
+  expect('a net on the rack has nothing more to scan', /On the rack, on top of the rack/.test(await p8.textContent('.wo-now')) && !(await p8.$('[data-wo]')));
+  const C2 = 'WOMQD001-02/2';
+  await scan8(C2); await p8.click('[data-wo]'); await scan8(C2); await p8.click('[data-wo]'); await scan8(C2);
+  await p8.click('[data-wo-prob]');
+  expect('problem: reject, or send back to an earlier step', !!(await p8.$('[data-wo-rej]')) && (await p8.$$('[data-wo-back]')).length === 1);
+  await p8.click('[data-wo-back="0"]'); await p8.click('[data-why="Cut wrong"]');
+  w8 = await S8();
+  expect('sent back to Cutting for rework, with the reason', w8.wo.orders.WOMQD001.nets[2].step === 0 && w8.wo.orders.WOMQD001.nets[2].rw === 1 && w8.wo.orders.WOMQD001.nets[2].note === 'Cut wrong');
+  await scan8(C2); await p8.click('[data-wo-prob]'); await p8.click('[data-wo-rej]'); await p8.click('[data-why="Torn or damaged"]');
+  w8 = await S8();
+  expect('rejected: the order is done (1 on the rack, 1 rejected)', w8.wo.orders.WOMQD001.nets[2].st === 'rejected' && w8.wo.orders.WOMQD001.state === 'done');
+  await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew');
+  await p8.click('[data-wo-f="all"]'); await p8.click('[data-wo-open="WOMQD001"]');
+  await p8.click('[data-wo-rp="2"]'); await p8.waitForSelector('#lblAsk'); await p8.click('[data-lsz="L"]');
+  expect('reprint: a new label -R2 on the large roll', /WOMQD001-02\/2-R2/.test(await p8.textContent('#print-area')) && (await p8.getAttribute('#print-area', 'class')) === 'lbl-L');
+  await p8.evaluate(() => { location.hash = 'scan'; }); await p8.waitForSelector('#scanIn');
+  expect('the old label stops working', /Old label/.test(await scan8(C2)));
+  expect('the new label works', /Rejected/.test(await scan8(C2 + '-R2')));
+  await p8.evaluate(() => { location.hash = 'orders'; }); await p8.waitForSelector('#woNew'); await p8.click('[data-wo-open="WOMQD003"]');
+  await p8.click('[data-wo-bulk="RECV"][data-k="0"]');
+  w8 = await S8();
+  expect('manager: whole order received at Cutting in one tap', Object.values(w8.wo.orders.WOMQD003.nets).every((x) => x.st === 'recv'));
+  expect('work orders page fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await p8.evaluate(() => { location.hash = 'production'; }); await p8.waitForSelector('.wo-board');
+  expect('production page shows where nets pile up (7 at Cutting: 3 waiting, 4 in work)', /^7\s*Cutting\s*3 waiting · 4 in work/.test(await p8.textContent('.wo-col.pile')));
+  expect('production page fits the phone', (await p8.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await p8.close();
   if (errors.length) { failed++; console.log('FAIL  page errors: ' + errors.join(' | ')); }
 
   await browser.close();
