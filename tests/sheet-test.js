@@ -68,7 +68,7 @@ function get(t) { return JSON.parse(ctx.doGet({ parameter: { t } }).text); }
 
 // ---- sign-in ----
 let r = get('');
-expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 12 && !r.stock && !r.workers);
+expect('no sign-in: doGet gives nothing but the version', !r.ok && r.auth && r.v === 13 && !r.stock && !r.workers);
 r = call({ events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
 expect('no sign-in: a scan is refused', !r.ok && r.auth && sheets.Scans.data.length === 1);
 r = call({ key: 'change-me', events: [{ id: 'x0', type: 'OUT', net: 'DN-185x90-BK', qty: 1 }] });
@@ -126,7 +126,7 @@ const NET = 'DN-185x90-BK', PICK = 'AR-C4-R3';
 
 // old sheets: setup() adds the new Reason column title
 expect('Scans tab has the Reason column', sheets.Scans.data[0][13] === 'Reason');
-expect('doGet says version 12', state().v === 12);
+expect('doGet says version 13', state().v === 13);
 expect('setup installs one daily snapshot trigger', triggers.length === 1 && triggers[0].getHandlerFunction() === 'dailySnapshot' && (ctx.setup(), triggers.length === 1));
 expect('a version 7 sheet: the Put away tab is renamed In boxes, rows kept', (() => {
   sheets['In boxes'].data.push(['AL-C1-R1', 'DN-185x90-BK', '', 3]); sheets['In boxes'].setName('Put away'); ctx.setup();
@@ -332,7 +332,7 @@ expect('box recount is for managers: a worker\'s is refused', r.refused.length =
   r = as(WK, [{ id: 'rt2', type: 'WORIGHT', badge: 'EMP-07', on: true, t: at(0) }]);
   expect('a worker cannot give label printing', r.refused.length === 1);
   const g0 = get(WK);
-  expect('everyone reads the open orders with every net; workers get no numbers per person', g0.v === 12 && g0.wo.orders.length === 3 && g0.wo.orders[0].nets.length === 3 && g0.wo.orders[0].nets[0][2] === 'wait' && g0.wo.daily.length === 0 && g0.wo.rights.me === true);
+  expect('everyone reads the open orders with every net; workers get no numbers per person', g0.v === 13 && g0.wo.orders.length === 3 && g0.wo.orders[0].nets.length === 3 && g0.wo.orders[0].nets[0][2] === 'wait' && g0.wo.daily.length === 0 && g0.wo.rights.me === true);
   const C1 = 'WOMQD001-01/3', C2 = 'WOMQD001-02/3', C3 = 'WOMQD001-03/3';
   r = as(WK, [{ id: 'w-r1', type: 'WOSTEP', code: C1, act: 'RECV', from: [0, 'wait'], t: at(0) }]);
   expect('Cutting received: saved', !r.refused.length && netRow(C1)[5] === 'recv' && netRow(C1)[6] === 'EMP-07');
@@ -399,6 +399,32 @@ expect('box recount is for managers: a worker\'s is refused', r.refused.length =
   const p0 = sheets.Production.data.length;
   ctx.dailySnapshot();
   expect('night: nets of orders finished over 14 days ago move to "WO nets done", Production is kept', !nets().some((x) => x[1] === 'WOMQD001') && sheets['WO nets done'].data.filter((x) => x[1] === 'WOMQD001').length === 3 && sheets.Production.data.length === p0 && nets().length === 3);
+  // ---- delete work orders (version 13): managers and the owner, reason needed, racked nets can come off stock ----
+  const stk = () => get(T.token).stock[WB] || 0, boxq = (b) => (get(T.token).shelf.find((y) => y.box === b && y.net === WB) || { qty: 0 }).qty;
+  const s1 = stk(), top1 = boxq('TOP'), bx1 = boxq(bx), cut1 = get(T.token).wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Cutting').done;
+  r = as(WK, [{ id: 'del-w', type: 'WODELETE', orders: ['WOMQD001'], reason: 'Test orders', stockOff: true, t: at(70) }]);
+  expect('delete: a worker cannot delete work orders', r.refused.length === 1 && get(T.token).wo.orders.some((o) => o.id === 'WOMQD001'));
+  r = as(T.token, [{ id: 'del-0', type: 'WODELETE', orders: ['WOMQD001'], reason: '', stockOff: true, t: at(70) }]);
+  expect('delete: a reason is needed', r.refused.length === 1 && /why/.test(r.refused[0].why));
+  r = as(T.token, [{ id: 'del-1', type: 'WODELETE', orders: ['WOMQD001'], reason: 'Test orders', stockOff: true, history: true, t: at(71) }]);
+  let gd = get(T.token);
+  expect('delete one order: it is gone with its nets (also the finished ones)', !r.refused.length && !gd.wo.orders.some((o) => o.id === 'WOMQD001') && !sheets['WO nets done'].data.slice(1).some((x) => x[1] === 'WOMQD001') && !nets().some((x) => x[1] === 'WOMQD001'));
+  expect('delete: the 2 racked nets come off stock and off their boxes (TOP and ' + bx + ')', stk() === s1 - 2 && boxq('TOP') === top1 - 1 && boxq(bx) === bx1 - 1);
+  expect('delete: its step history goes, and the people\'s numbers go down', !sheets.Production.data.slice(1).some((x) => x[4] === 'WOMQD001') && gd.wo.daily.find((x) => x.who === 'EMP-07' && x.step === 'Cutting').done < cut1);
+  expect('delete: its rack-in lines leave the scan log; one delete line is added', !sheets.Scans.data.some((x) => x[2] === 'WOIN' && x[5] === 'WOMQD001') && sheets.Scans.data.some((x) => x[0] === 'del-1' && /Deleted 1 work order/.test(x[11]) && /reason: Test orders/.test(x[11])));
+  expect('delete: every removed row is kept in the "WO deleted" tab', sheets['WO deleted'].data.filter((x) => /WOMQD001/.test(x[4])).length >= 3 && sheets['WO deleted'].data.some((x) => x[3] === 'Production'));
+  r = as(T.token, [{ id: 'del-1', type: 'WODELETE', orders: ['WOMQD001'], reason: 'Test orders', stockOff: true, t: at(71) }]);
+  expect('delete sent twice (phone was offline) changes nothing the second time', !r.refused.length && stk() === s1 - 2);
+  r = as(WK, [{ id: 'w-gone', type: 'WOSTEP', code: 'WOMQD001-03/3', act: 'RECV', from: [0, 'wait'], t: at(72) }]);
+  expect('a label of a deleted order no longer works', r.refused.length === 1 && /not found/.test(r.refused[0].why));
+  as(WK, [{ id: 'w-k1', type: 'WOSTEP', code: 'WOMQD003-01/1', act: 'RECV', from: [0, 'wait'], t: at(73) }]);
+  const prodK = sheets.Production.data.filter((x) => x[4] === 'WOMQD003').length;
+  r = as(T.token, [{ id: 'del-2', type: 'WODELETE', orders: ['WOMQD003'], reason: 'Made by mistake', history: false, t: at(74) }]);
+  expect('delete keeping the step history: order gone, its scans stay in Production', !r.refused.length && !get(T.token).wo.orders.some((o) => o.id === 'WOMQD003') && sheets.Production.data.filter((x) => x[4] === 'WOMQD003').length === prodK && prodK > 0);
+  r = as(T.token, [{ id: 'del-all', type: 'WODELETE', all: true, reason: 'Test orders', stockOff: true, restart: true, t: at(75) }]);
+  expect('clear all work orders: none left, and the next order is WOMQD001 again', !r.refused.length && get(T.token).wo.orders.length === 0 && nets().length === 0 && call({ action: 'wocreate', t: T.token, req: 'rq9', orders: [{ net: WN, qty: 2 }] }).orders[0].id === 'WOMQD001');
+  r = as(T.token, [{ id: 'del-none', type: 'WODELETE', orders: ['WOMQD777'], reason: 'x', t: at(76) }]);
+  expect('delete of an order that is not there is refused', r.refused.length === 1);
   sheets.Snapshots.data.splice(1); // the snapshot tests below start with no copies
 }
 
