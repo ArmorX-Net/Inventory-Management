@@ -482,6 +482,7 @@ const STEPS = [
   await ask('210 100 black');
   expect('help: a size shows its boxes', /Size 210x100 Black/.test(await p6.textContent('#hOut summary')) && /AR-C1-R3/.test(await p6.textContent('#hOut details')));
   expect('help: nonsense says no answer found', (await ask('zzqq')).length === 0 && /No answer found/.test(await p6.textContent('#hOut')));
+  expect('help shows the app version on this phone', /app version 14\.\d+/.test(await p6.textContent('#hVer')));
   await p6.click('#hPrint');
   expect('cheat sheet prints on A4 portrait with every section', /A4 portrait/.test(await p6.textContent('#page-size')) && (await p6.$$('#print-area .cheat section')).length === 8);
   await p6.goto('file://' + path.join(__dirname, '..', 'index.html') + '#racks'); await p6.click('[data-b="AL-C5-R3"]');

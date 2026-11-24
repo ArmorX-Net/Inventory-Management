@@ -117,5 +117,14 @@ check('Code.gs has no real access key', !gsKey || gsKey[1] === '' || /PASTE|CHAN
 // 4. Print rule: everything printed is solid black (black-and-white printer).
 check('print styles force solid black', /#print-area,#print-area \*\{color:#000 !important;border-color:#000 !important/.test(read('styles.css')));
 
+// 5. App version (owner 24 Nov 2026): phones reload themselves when version.json changes, so one release = one number everywhere.
+const appV = (/var APP_V = '([^']+)'/.exec(read('app.js')) || [])[1];
+let fileV = null; try { fileV = JSON.parse(read('version.json')).v; } catch (e) {}
+check('version.json matches APP_V in app.js', !!appV && fileV === appV, 'app.js ' + appV + ', version.json ' + fileV);
+const tags = read('index.html').match(/(?:src|href)="(?!https?:)(?:styles\.css|app\.js|cam\.js|data\/[a-z]+\.js)[^"]*"/g) || [];
+check('index.html loads app files with ?v=' + appV, tags.length === 5 && tags.every((t) => t.indexOf('?v=' + appV + '"') > 0), tags.join(' '));
+const gsV = Number((/var VERSION = (\d+)/.exec(read('google-sheet/Code.gs')) || [])[1]);
+check('app version starts with the Code.gs version', !!appV && Number(appV.split('.')[0]) === gsV, 'app ' + appV + ', Code.gs ' + gsV);
+
 console.log((failures ? failures + ' FAILED, ' : 'All checks passed. ') + passes + ' passed.');
 process.exit(failures ? 1 : 0);

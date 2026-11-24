@@ -47,6 +47,7 @@ Read this before changing the app. These are the owner's standing rules. If a ch
 * The print dialog's "Headers and footers" prints the date and web address on the label: tell users to untick it.
 
 ## Before every release
+0. Bump the app version (owner 24 Nov 2026: phones update themselves): `APP_V` in `app.js`, `version.json` and the `?v=` tags in `index.html`, all the same. Number = Code.gs version + app update (14.1, 14.2 ...; a new Code.gs version starts at .1 again). Help shows it on every phone.
 1. `node tests/check-data.js` (no install needed).
 2. `node tests/scan-test.js` (needs Playwright) drives the Scan station in a real browser.
 3. `node tests/sheet-test.js` (no install needed) runs `Code.gs` against a fake sheet.
