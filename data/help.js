@@ -137,7 +137,7 @@ window.HELP_QA = [
   { t: 'Mistakes', q: 'The app says "Unknown code".', k: 'unknown code not found label',
     a: 'The label is not one the app knows. Check you scanned the right label (box, batch, badge or command). Type the code by hand if the label is damaged. A <b>work order label</b> (WOMQD…) says Unknown code? The phone has an old copy of the app: reload the page (or close the app and open it again), then scan again.' },
   { t: 'Mistakes', q: 'Which version is this phone running?', k: 'version update old app new reload refresh phone updated latest',
-    a: 'The top of this Help page shows <b>app version</b> (for example 14.1) and the Google Sheet script version (for example 14). All phones should show the same app version. Phones update themselves within a few minutes of a new version, when nobody is in the middle of a scan. A phone still on an old number: reload the page, or close the app and open it again.' },
+    a: 'The top of this Help page says <b>Your phone has the latest app</b>, or <b>A newer app is ready</b> with an <b>Update now</b> button. Tap it: you stay signed in and scans not sent yet are kept. Phones also update themselves within a few minutes, when nobody is in the middle of a scan.' },
 
   // ---- stock and dashboard ----
   { t: 'Stock and dashboard', q: 'What do the columns on the Stock page mean?', k: 'stock page columns rack location in total rack space refill at sells per day days left status sku',

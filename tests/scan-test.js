@@ -483,6 +483,13 @@ const STEPS = [
   expect('help: a size shows its boxes', /Size 210x100 Black/.test(await p6.textContent('#hOut summary')) && /AR-C1-R3/.test(await p6.textContent('#hOut details')));
   expect('help: nonsense says no answer found', (await ask('zzqq')).length === 0 && /No answer found/.test(await p6.textContent('#hOut')));
   expect('help shows the app version on this phone', /app version 14\.\d+/.test(await p6.textContent('#hVer')));
+  await p6.evaluate(() => { window.ARMORX_TEST_LATEST = '99.1'; location.hash = '#scan'; return true; }).then(() => p6.evaluate(() => { location.hash = '#help'; }));
+  await p6.waitForSelector('#hUpd');
+  expect('help: a newer app shows Update now', /newer app is ready: version 99\.1/.test(await p6.textContent('#hVer')));
+  await p6.evaluate(() => { window.ARMORX_TEST_LATEST = (document.querySelector('#hVer').textContent.match(/has version (\d+\.\d+)/) || [])[1]; location.hash = '#scan'; });
+  await p6.evaluate(() => { location.hash = '#help'; }); await p6.waitForSelector('.help-ver-ok');
+  expect('help: the latest app says so, no button', /latest app/.test(await p6.textContent('#hVer')) && !(await p6.$('#hUpd')));
+  await p6.evaluate(() => { window.ARMORX_TEST_LATEST = null; });
   await p6.click('#hPrint');
   expect('cheat sheet prints on A4 portrait with every section', /A4 portrait/.test(await p6.textContent('#page-size')) && (await p6.$$('#print-area .cheat section')).length === 8);
   await p6.goto('file://' + path.join(__dirname, '..', 'index.html') + '#racks'); await p6.click('[data-b="AL-C5-R3"]');
