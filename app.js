@@ -2514,6 +2514,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var start = decodeURIComponent(((location.hash || '').split('?q=')[1] || '').replace(/\+/g, ' '));
     var topics = window.HELP_TOPICS || [];
     h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Help</h2><button class="btn" id="hPrint">Print cheat sheet</button></div>' +
+      '<div class="small muted" id="hVer">This phone: <b>app version ' + esc(APP_V) + '</b>' + (sheetOn() ? ' · Google Sheet script <b>version ' + esc(S.sheetV || '?') + '</b>' : '') + '</div>' +
       '<label class="f help-q">Type your question, a box code or a size<input id="hq" type="search" autocomplete="off" placeholder="e.g. room for 20, undo, AL-C5-R3, 210 90"></label>' +
       '<div class="help-chips">' + topics.map(function (t) { return '<button type="button" class="btn" data-ht="' + esc(t) + '">' + esc(t) + '</button>'; }).join('') + '</div>' +
       '<div id="hOut"></div>');
@@ -2830,6 +2831,42 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (LIVE_PAGES.indexOf(k) >= 0 && !userBusy()) route();
   }
   setInterval(function () { pull().then(function (changed) { if (changed) refreshPage(); }); }, 20000);
+
+  // ---------- app version: every phone updates itself (owner 24 Nov 2026) ----------
+  // A phone tab left open keeps the code it loaded, even days later, while the data keeps syncing. So the app asks the web
+  // server for version.json every few minutes and when the phone comes back to the tab; a newer version reloads the page
+  // once nobody is in the middle of something. Unsent scans and all data are saved on the phone, so a reload loses nothing.
+  // Release rule: bump APP_V here, in version.json and in the ?v= tags in index.html (tests/check-data.js checks they match).
+  // The number = Google Sheet script version (14) + app update (.1, .2 ...).
+  var APP_V = '14.1', newV = null, lastTouch = Date.now();
+  ['pointerdown', 'keydown'].forEach(function (ev) { document.addEventListener(ev, function () { lastTouch = Date.now(); }, true); });
+  function appIdle() { // nothing typed, camera closed, not saving, and no step open (or nobody touched the phone for 2 minutes)
+    var open = sess.mode || sess.await || sess.woc || document.querySelector('#adjust .act, #adjust input');
+    var si = document.getElementById('scanIn');
+    return !userBusy() && !(si && si.value) && !document.body.classList.contains('cam-on') && !syncState.busy && (!open || Date.now() - lastTouch > 2 * 60000);
+  }
+  function updateNow() {
+    if (!newV) return;
+    if (!appIdle()) return; // try again on the next check
+    try { sessionStorage.setItem('armorxUpd', JSON.stringify({ v: newV, t: Date.now() })); } catch (e) {}
+    var q = location.search.replace(/^\?/, '').split('&').filter(function (x) { return x && !/^u=/.test(x); });
+    q.push('u=' + encodeURIComponent(newV)); // a new address, so the browser fetches the new page and code, not its saved copy
+    location.replace(location.pathname + '?' + q.join('&') + location.hash);
+  }
+  function checkVersion() {
+    if (location.protocol === 'file:' || !window.fetch) return;
+    if (newV) { updateNow(); return; }
+    fetch('version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var v = d && d.v ? String(d.v) : ''; if (!v || v === APP_V) return;
+      var tried = null; try { tried = JSON.parse(sessionStorage.getItem('armorxUpd') || 'null'); } catch (e) {}
+      if (tried && tried.v === v && Date.now() - tried.t < 10 * 60000) return; // just reloaded for it: the web server can lag a few minutes
+      newV = v; updateNow();
+    }).catch(function () {});
+  }
+  setInterval(checkVersion, 3 * 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkVersion(); });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) checkVersion(); }); // a tab brought back from the browser's memory
+  setTimeout(checkVersion, 5000);
 
   // ---------- router ----------
   var VIEWS = { dashboard: viewDashboard, scan: viewScan, orders: viewOrders, production: viewProduction, batches: viewBatches, stock: viewStock, racks: viewRacks, refill: viewRefill, pick: viewPick, print: viewPrint, help: viewHelp, log: viewLog, people: viewPeople, settings: viewSettings };
