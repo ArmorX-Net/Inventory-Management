@@ -326,7 +326,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     var perWorker = {}, today = woDaysAgo(0); // work order steps done today, per person (from the sheet)
     (woState().daily || []).forEach(function (r) { if (r.day !== today || !r.done) return; var p = perWorker[r.who] = perWorker[r.who] || { name: r.name || wname(r.who), steps: {}, n: 0 }; p.steps[r.step] = (p.steps[r.step] || 0) + r.done; p.n += r.done; });
     var wRows = Object.keys(perWorker).sort(function (a, b) { return perWorker[b].n - perWorker[a].n; }).map(function (id) { var p = perWorker[id]; return '<tr><td>' + esc(p.name) + '</td><td class="muted small">' + esc(Object.keys(p.steps).map(function (k) { return p.steps[k] + ' ' + k; }).join(', ')) + '</td><td>' + p.n + '</td></tr>'; }).join('') || '<tr><td colspan="3" class="muted">No work order steps done yet today.</td></tr>';
-    h('<div class="row" style="justify-content:space-between;align-items:center"><h2>Today at a glance</h2><div class="row"><a class="btn primary" href="#orders">New work order</a><a class="btn dark" href="#scan">Open scan station</a></div></div>' +
+    h('<div class="row" style="justify-content:space-between;align-items:center"><h2>Today at a glance</h2><div class="row">' + checkBtn('chkD') + '<a class="btn primary" href="#orders">New work order</a><a class="btn dark" href="#scan">Open scan station</a></div></div>' +
       '<div class="grid">' +
       kpi(total.toLocaleString(), 'Doornets on racks', '') + kpi(out, 'Nets out of stock', out ? 'bad' : 'ok') + kpi(low, 'Below refill level', low ? 'warn' : 'ok') +
       kpi(open.length + ' · ' + inProd, 'Work orders · nets in production', open.some(woLate) ? 'warn' : '') + kpi(inToday, 'In today (rack-in + returns)', '') + kpi(outToday, 'Out today (orders + FBA)', '') + '</div>' +
@@ -424,6 +424,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       '<div class="acts" id="acts"></div>' +
       '<div class="cfm-tg"><label><input type="checkbox" id="cfmTg"' + (checkOn() ? ' checked' : '') + '><span class="tg"></span><span>Check before saving</span></label>' + tipBtn('CHECK') + '</div>' +
       '<button type="button" class="btn camBtn" id="camBtn">Scan with camera</button>' +
+      '<div class="chk-w">' + checkBtn('chkS') + tipBtn('LOOK') + '</div>' +
       '<div class="prompt" id="prompt"></div>' +
       '<input id="scanIn" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Scan or type a code…" aria-label="Scan input">' +
       '<div class="feedback" id="fb" role="status">Ready.</div>' +
@@ -1748,7 +1749,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   // ---------- rack map ----------
   function viewRacks() {
     var sides = window.SIDES || [], COLS = window.RACK_COLS || 6, RNG = window.SIDE_RANGES || {};
-    h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Rack map</h2><label class="f">Find a size<input id="rq" placeholder="e.g. 205x90"></label></div>' +
+    h('<div class="row" style="justify-content:space-between;align-items:flex-end"><h2>Rack map</h2><div class="row" style="align-items:flex-end">' + checkBtn('chkR') + '<label class="f">Find a size<input id="rq" placeholder="e.g. 205x90"></label></div></div>' +
       '<div class="note small">Sizes in number order. Popular sizes on R2–R4, slow sizes on R1/R5. Extra stock sits on top of the racks. 210×100 is in AR columns 1–3, picked from R3.</div>' +
       '<div class="legend"><span><i style="background:var(--soft-ok)"></i>Pick box, healthy</span><span><i style="background:var(--soft-warn)"></i>Low</span><span><i style="background:var(--soft-bad)"></i>Out / box empty</span><span><i style="border:1px dashed var(--ink)"></i>Backup</span></div>' +
       '<div class="small muted">Tap a box to see everything about that net.</div><div class="pop" id="boxInfo" hidden></div><div class="sides" id="sides"></div>');
@@ -1772,36 +1773,9 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     // tap a box: a pop-up in front of the screen (owner 22 Nov 2026): the total first, then one line per place it sits.
     // The lines always add up to the total. No pictures: plain numbers that are easy to read on a phone.
     function info(code) {
-      var bx = BOXES[code], el = document.getElementById('boxInfo');
-      var close = function () { el.hidden = true; el.innerHTML = ''; document.body.classList.remove('pop-on'); };
-      el.onclick = function (e) { if (e.target === el || e.target.closest('[data-popx]')) close(); };
-      el.onkeydown = function (e) { if (e.key === 'Escape') close(); };
-      var r = boxRec(code), list = bx ? netsAt(code) : [], edit = bx && can('Manager') && sheetV8(), n = list[0];
-      if (!bx) {
-        el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true"><div class="pop-h"><div class="pop-net">' + esc(code) + '</div><div class="small">' + esc(locHint(code)) + '. No net here.</div></div><button type="button" class="btn dark pop-x" data-popx="1">Close</button></div>';
-        el.hidden = false; document.body.classList.add('pop-on'); return;
-      }
-      var t = topOf(n.id), boxesIn = inBoxes(n.id), left = pickLeft(n.id) - boxedLeft(n.id), nb = onHand(n.id) - boxesIn - t.q + left, rows = '';
-      homeOf(n).forEach(function (c) {
-        var known = !!S.shelf[countKey(c, n.id)], b = BOXES[c];
-        rows += '<div class="pl' + (c === code ? ' here' : '') + '"><span>' + (b.role === 'pick' ? 'Pick box' : 'Backup box') + ' <code>' + esc(c) + '</code>' + (c === code ? ' <em>this box</em>' : '') + '<small>' + (isEmpty(c) ? 'marked empty · ' : '') + 'a full box holds ' + boxCap(c, n.id) + '</small></span><b>' + (known ? counted(c, n.id) : '—') + '</b></div>';
-      });
-      rows += '<div class="pl"><span>On top of the racks<small>' + (t.q ? esc(topText(t, true)) + ' · ' + TOP_BOX + ' in a full box' : 'none') + '</small></span><b>' + t.q + '</b></div>';
-      if (left) rows += '<div class="pl"><span>On the pick list<small>already off stock, still to pick</small></span><b>−' + left + '</b></div>';
-      if (nb > 0) rows += '<div class="pl"><span>Not in a box<small>in stock, no box number yet</small></span><b>' + nb + '</b></div>';
-      var rack = homeOf(n).reduce(function (a, c) { return a + counted(c, n.id); }, 0);
-      el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true" aria-label="Box ' + esc(code) + '">' +
-        '<div class="pop-h"><div class="pop-net"><span class="sw sw-' + n.color + '"></span>' + esc(n.size.replace('x', ' × ')) + ' ' + esc(n.color) + '</div>' +
-        '<div class="small"><b>' + esc(code) + '</b> · ' + (bx.role === 'pick' ? 'PICK box' : 'BACKUP box') + ' · ' + esc(locHint(code)) + (r && r.state !== 'empty' && r.made ? ' · made ' + esc(fmtD(r.made)) : '') + '</div></div>' +
-        '<div class="pop-tot"><span>Total in stock</span><b>' + onHand(n.id) + '</b></div>' +
-        '<div class="pop-list">' + rows + '<div class="pl sum"><span>Adds up to</span><b>' + (boxesIn + t.q - left + Math.max(0, nb)) + '</b></div></div>' +
-        (nb < 0 ? '<div class="pop-warn">The boxes and the top hold <b>' + (-nb) + '</b> more than the total. Count this net again (Box recount), or a manager fixes a box number below.</div>' : '') +
-        '<div class="pop-foot"><span>Ready to pick on the racks <b>' + rack + '</b></span><span>Out today <b>' + outToday(n.id) + '</b></span></div>' +
-        (edit ? '<details class="pop-edit"><summary>Change a number (manager)</summary>' + editForm(code, n, t) + '</details>'
-          : (can('Manager') ? '<div class="small muted">Changing a box number needs the Google Sheet script version ' + BOXQTY_V + '.</div>' : '')) +
-        '<div class="small"><a href="#help?q=I tapped a box">What do these numbers mean?</a></div>' +
-        '<button type="button" class="btn dark pop-x" data-popx="1">Close</button></div>';
-      el.hidden = false; document.body.classList.add('pop-on');
+      var bx = BOXES[code], n = bx ? netsAt(code)[0] : null, edit = bx && can('Manager') && sheetV8();
+      boxPop(document.getElementById('boxInfo'), code, { extra: bx ? (edit ? '<details class="pop-edit"><summary>Change a number (manager)</summary>' + editForm(code, n, topOf(n.id)) + '</details>'
+        : (can('Manager') ? '<div class="small muted">Changing a box number needs the Google Sheet script version ' + BOXQTY_V + '.</div>' : '')) : '' });
       if (edit) wireEdit(code, n);
     }
     // manager: change the number in this box, the full boxes on top, or the part boxes on top. Reason needed; the total moves by the difference.
@@ -1847,6 +1821,173 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     app.querySelectorAll('.bx').forEach(function (b) { b.onclick = function () { info(b.dataset.b); }; });
     document.getElementById('rq').oninput = function () { var v = this.value.trim().toLowerCase(); app.querySelectorAll('.bx').forEach(function (b) { b.classList.toggle('hl', !!v && (b.dataset.s || '').indexOf(v) === 0); }); };
   }
+
+  // ---------- box summary: one pop-up for the Rack map and for Check (owner 22 Nov 2026, Check 26 Nov 2026) ----------
+  // The total first, then one line per place it sits; the lines always add up to the total. In production and packed nets
+  // kept apart show under it for information only: they are not stock. opt.top = html at the top, opt.extra = html before
+  // the buttons (manager edit on the Rack map), opt.foot = buttons instead of the one Close, opt.onclose.
+  function boxPop(el, code, opt) {
+    opt = opt || {};
+    var bx = BOXES[code];
+    var close = function () { el.hidden = true; el.innerHTML = ''; document.body.classList.remove('pop-on'); if (opt.onclose) opt.onclose(); };
+    el.onclick = function (e) { if (opt.stop) e.stopPropagation(); if (e.target === el || e.target.closest('[data-popx]')) close(); };
+    el.onkeydown = function (e) { if (e.key === 'Escape') close(); };
+    var r = boxRec(code), list = bx ? netsAt(code) : [], n = list[0], btns = opt.foot || '<button type="button" class="btn dark pop-x" data-popx="1">Close</button>';
+    if (!bx) {
+      el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true">' + (opt.top || '') + '<div class="pop-h"><div class="pop-net">' + esc(code) + '</div><div class="small">' + esc(locHint(code)) + '. No net here.</div></div>' + btns + '</div>';
+      el.hidden = false; document.body.classList.add('pop-on'); return;
+    }
+    var t = topOf(n.id), boxesIn = inBoxes(n.id), left = pickLeft(n.id) - boxedLeft(n.id), nb = onHand(n.id) - boxesIn - t.q + left, rows = '';
+    homeOf(n).forEach(function (c) {
+      var known = !!S.shelf[countKey(c, n.id)], b = BOXES[c];
+      rows += '<div class="pl' + (c === code ? ' here' : '') + '"><span>' + (b.role === 'pick' ? 'Pick box' : 'Backup box') + ' <code>' + esc(c) + '</code>' + (c === code ? ' <em>this box</em>' : '') + '<small>' + (isEmpty(c) ? 'marked empty · ' : '') + 'a full box holds ' + boxCap(c, n.id) + '</small></span><b>' + (known ? counted(c, n.id) : '—') + '</b></div>';
+    });
+    rows += '<div class="pl"><span>On top of the racks<small>' + (t.q ? esc(topText(t, true)) + ' · ' + TOP_BOX + ' in a full box' : 'none') + '</small></span><b>' + t.q + '</b></div>';
+    if (left) rows += '<div class="pl"><span>On the pick list<small>already off stock, still to pick</small></span><b>−' + left + '</b></div>';
+    if (nb > 0) rows += '<div class="pl"><span>Not in a box<small>in stock, no box number yet</small></span><b>' + nb + '</b></div>';
+    var rack = homeOf(n).reduce(function (a, c) { return a + counted(c, n.id); }, 0), pr = prodOf(n.id);
+    el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true" aria-label="Box ' + esc(code) + '">' + (opt.top || '') +
+      '<div class="pop-h"><div class="pop-net"><span class="sw sw-' + n.color + '"></span>' + esc(n.size.replace('x', ' × ')) + ' ' + esc(n.color) + '</div>' +
+      '<div class="small"><b>' + esc(code) + '</b> · ' + (bx.role === 'pick' ? 'PICK box' : 'BACKUP box') + ' · ' + esc(locHint(code)) + (r && r.state !== 'empty' && r.made ? ' · made ' + esc(fmtD(r.made)) : '') + '</div></div>' +
+      '<div class="pop-tot"><span>Total in stock</span><b>' + onHand(n.id) + '</b></div>' +
+      '<div class="pop-list">' + rows + '<div class="pl sum"><span>Adds up to</span><b>' + (boxesIn + t.q - left + Math.max(0, nb)) + '</b></div></div>' +
+      (nb < 0 ? '<div class="pop-warn">The boxes and the top hold <b>' + (-nb) + '</b> more than the total. Count this net again (Box recount), or a manager fixes a box number below.</div>' : '') +
+      '<div class="pop-foot"><span>Ready to pick on the racks <b>' + rack + '</b></span><span>Out today <b>' + outToday(n.id) + '</b></span></div>' +
+      '<div class="pop-list pop-prod"><div class="pl"><span>In production<small>' + (pr.n ? esc(pr.steps) + ' · not in stock yet' : 'none') + '</small></span><b>' + pr.n + '</b></div>' +
+      (pr.apart ? '<div class="pl"><span>Packed, not in stock<small>ready for FBA, bulk buyer or hold</small></span><b>' + pr.apart + '</b></div>' : '') + '</div>' +
+      (opt.extra || '') +
+      '<div class="small"><a href="#help?q=I tapped a box">What do these numbers mean?</a></div>' + btns + '</div>';
+    el.hidden = false; document.body.classList.add('pop-on');
+  }
+  function prodOf(id) { // nets of this size and colour in work orders: by step (not stock yet), and packed nets kept apart (never stock)
+    var by = {}, n = 0, apart = 0;
+    Object.keys(woState().orders).forEach(function (k) {
+      var o = S.wo.orders[k];
+      if (!o.nets) { if (o.state !== 'done' && o.net === id) { var q = Math.max(0, o.qty - o.racked - o.rejected - (o.ready || 0) - (o.shipped || 0)); if (q) { by[''] = (by[''] || 0) + q; n += q; } } return; }
+      woNetList(o).forEach(function (x) {
+        if (woNetId(o, x) !== id) return;
+        if (x.st === 'ready') { apart++; return; }
+        if (x.st === 'racked' || x.st === 'rejected' || x.st === 'shipped') return;
+        var s = x.step >= WO_RACK ? 'Packed' : WO_STEPS[x.step]; by[s] = (by[s] || 0) + 1; n++;
+      });
+    });
+    var steps = WO_STEPS.slice(0, WO_RACK).concat(['Packed']).filter(function (s) { return by[s]; }).map(function (s) { return s + ' ' + by[s]; });
+    return { n: n, apart: apart, steps: steps.join(' · ') || (n ? 'in work orders' : '') };
+  }
+
+  // ---------- Check (owner 26 Nov 2026): scan a box label or a net label, or type a size, and see its summary ----------
+  // Read only: it never changes stock or sends anything, so everyone can use it, also offline (last synced numbers).
+  // Uses only what this phone already has, so it needs no new Google Sheet script.
+  var chk = { ok: false, cam: '', camCls: '' };
+  function chkEl() {
+    var el = document.getElementById('chk');
+    if (!el) { el = document.createElement('div'); el.className = 'pop'; el.id = 'chk'; el.hidden = true; app.appendChild(el); }
+    return el;
+  }
+  function chkTime(iso) { var d = new Date(iso); return (isToday(iso) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ') + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  function chkAsOf() { // offline: the last numbers this phone got, with their time
+    if (!sheetOn()) return '';
+    var at = syncState.at || S.outAt, off = !!syncState.err || navigator.onLine === false;
+    if (!off && syncState.at) return '';
+    return '<div class="chk-asof">' + (off ? 'No internet. ' : '') + (at ? 'Numbers as of ' + esc(chkTime(at)) + '.' : 'Numbers not synced yet.') + '</div>';
+  }
+  function chkFoot() { return '<div class="pop-x2"><button type="button" class="btn primary" data-chk-next="1">Next</button><button type="button" class="btn dark" data-popx="1">Close</button></div>'; }
+  function chkWire(el) {
+    var nx = el.querySelector('[data-chk-next]'); if (nx) nx.onclick = function () { chkStart(''); if (TOUCH) chkCam(); };
+    var nt = el.querySelector('[data-chk-net]'); if (nt) nt.onclick = function () { chkNet(BY_ID[nt.dataset.chkNet]); };
+  }
+  function chkFresh() { // online: get the newest numbers, then draw the summary again (nothing typed is lost)
+    if (!sheetOn() || !signedIn()) return;
+    pull().then(function (c) { var el = document.getElementById('chk'); if (!c || !el || el.hidden) return; var b = el.querySelector('[data-chk-code]'); if (b) chkCode(b.dataset.chkCode); else { var a = el.querySelector('.chk-asof'); if (a) a.outerHTML = chkAsOf(); } });
+  }
+  function openCheck() { chkStart(''); if (TOUCH) chkCam(); chkFresh(); }
+  function chkStart(msg) {
+    var el = chkEl();
+    el.innerHTML = '<div class="pop-card chk-card" role="dialog" aria-modal="true" aria-label="Check">' +
+      '<div class="pop-h"><div class="pop-net">Check ' + tipBtn('LOOK') + '</div><div class="small">Scan a box label or a net label, or type a size.</div></div>' + chkAsOf() +
+      '<button type="button" class="btn camBtn" id="chkCam">Scan with camera</button>' +
+      '<label class="f">Or type a size or box code<input id="chkIn" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. 230x140 or AL-C5-R3"></label>' +
+      '<div id="chkMsg" class="chk-msg" role="status">' + msg + '</div><div id="chkPick"></div>' +
+      '<button type="button" class="btn dark pop-x" data-popx="1">Close</button></div>';
+    var close = function () { el.hidden = true; el.innerHTML = ''; document.body.classList.remove('pop-on'); };
+    el.onclick = function (e) { e.stopPropagation(); if (e.target === el || e.target.closest('[data-popx]')) close(); };
+    el.onkeydown = function (e) { if (e.key === 'Escape') close(); };
+    el.hidden = false; document.body.classList.add('pop-on');
+    var inp = document.getElementById('chkIn');
+    document.getElementById('chkCam').onclick = chkCam;
+    inp.oninput = function () { chkSizes(inp.value); };
+    inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); var v = inp.value; if (!chkCode(v)) { inp.select(); } } };
+    document.getElementById('chkPick').onclick = function (e) {
+      var s = e.target.closest('[data-chk-size]'), c = e.target.closest('[data-chk-net]');
+      if (s) { inp.value = s.dataset.chkSize; chkSizes(inp.value); } else if (c) chkNet(BY_ID[c.dataset.chkNet]);
+    };
+    if (!TOUCH) inp.focus();
+  }
+  function chkSizes(v) { // "230x140", "230 140" or "230": the matching sizes, then the three colours of one size
+    var pick = document.getElementById('chkPick'); if (!pick) return;
+    var m = String(v || '').trim().match(/^(\d{2,3})(?:\s*[x×*\s-]\s*(\d{1,3}))?$/i);
+    if (!m) { pick.innerHTML = ''; return; }
+    var all = woSizes(), exact = m[2] && all.indexOf(m[1] + 'x' + m[2]) >= 0 ? m[1] + 'x' + m[2] : null;
+    if (exact) {
+      pick.innerHTML = '<div class="small">' + esc(exact) + ': tap the color</div><div class="qtyrow">' + COLORS.map(function (c) { var n = NETS.filter(function (x) { return x.size === exact && x.color === c; })[0]; return n ? '<button type="button" class="btn colorbtn" data-chk-net="' + n.id + '"><span class="sw sw-' + n.color + '"></span>' + esc(n.color) + ' <span class="small muted">(' + onHand(n.id) + ')</span></button>' : ''; }).join('') + '</div>';
+      return;
+    }
+    var pre = m[1] + (m[2] ? 'x' + m[2] : ''), hits = all.filter(function (s) { return s.indexOf(pre) === 0; }).slice(0, 12);
+    pick.innerHTML = hits.length ? '<div class="small">Tap the size</div><div class="chips chk-sizes">' + hits.map(function (s) { return '<button type="button" class="chip" data-chk-size="' + s + '">' + s + '</button>'; }).join('') + '</div>' : '<div class="small">No door net size like ' + esc(v) + '.</div>';
+  }
+  function chkNet(n) { if (n) chkBox(n.pick); }
+  function chkBox(code) {
+    var el = chkEl();
+    boxPop(el, code, { top: chkAsOf(), foot: chkFoot(), stop: true });
+    var c = el.querySelector('.pop-card'); if (c) c.setAttribute('data-chk-code', code);
+    chkWire(el);
+  }
+  function chkCode(raw) { // true = understood (the camera closes), false = try again
+    var code = String(raw || '').trim().toUpperCase(), msg = document.getElementById('chkMsg');
+    if (!code) return false;
+    if (code === '2F') code = FLOOR2;
+    var p = woParse(code), net = NETS.filter(function (x) { return x.id.toUpperCase() === code; })[0];
+    if (BOXES[code]) { chkBox(code); return true; }
+    if (net) { chkNet(net); return true; }
+    if (p) { chkWo(p, code); return true; }
+    if (code === FLOOR2) { chkStart('Top of the racks has no fixed places. Type the size to see its top boxes.'); return true; }
+    if (/^\d/.test(code)) {
+      chkSizes(code);
+      var one = document.querySelectorAll('#chkPick [data-chk-size]');
+      if (one.length === 1) { document.getElementById('chkIn').value = one[0].dataset.chkSize; chkSizes(one[0].dataset.chkSize); }
+      chk.cam = ''; return !!document.querySelector('#chkPick [data-chk-net], #chkPick [data-chk-size]');
+    }
+    var say = /^EMP-/.test(code) ? 'That is a badge. Scan a box label or a net label.' : /^(CMD|QTY)-/.test(code) ? 'That is a command. Scan a box label or a net label.' : 'Not a box or net label: ' + code + '.';
+    chk.cam = say; chk.camCls = 'bad';
+    if (msg) { msg.textContent = say; msg.className = 'chk-msg bad'; }
+    return false;
+  }
+  function chkWo(p, code) { // a work order net label: where the net is now, and its order
+    var f = woFind(p), el = chkEl();
+    if (!f) { chkStart(esc(code) + ': this net label is not in the app. The order may be finished long ago, or deleted.'); return; }
+    var o = f.o, x = f.x, n = BY_ID[woNetId(o, x)], nx = woNext(x, o), old = x.label !== p.label;
+    var close = function () { el.hidden = true; el.innerHTML = ''; document.body.classList.remove('pop-on'); };
+    el.onclick = function (e) { e.stopPropagation(); if (e.target === el || e.target.closest('[data-popx]')) close(); };
+    el.innerHTML = '<div class="pop-card" role="dialog" aria-modal="true" aria-label="Net ' + esc(code) + '" data-chk-code="' + esc(code) + '">' + chkAsOf() +
+      '<div class="pop-h"><div class="pop-net">' + (n ? '<span class="sw sw-' + n.color + '"></span>' + esc(n.size.replace('x', ' × ')) + ' ' + esc(n.color) : esc(woNetId(o, x))) + '</div>' +
+      '<div class="small"><b>' + esc(woCode(o, x)) + '</b> · work order net ' + x.no + ' of ' + o.qty + '</div></div>' +
+      (old ? '<div class="pop-warn">This label was printed again. It no longer works: use the new label <b>' + esc(woCode(o, x)) + '</b>.</div>' : '') +
+      '<div class="pop-list">' +
+      '<div class="pl"><span>Now<small>' + esc(woWhere(x, o)) + '</small></span></div>' +
+      (nx ? '<div class="pl"><span>Next step<small>' + esc(nx.say) + '</small></span></div>' : '') +
+      '<div class="pl"><span>Order ' + esc(o.id) + '<small>' + esc(woWhat(o)) + ' · ' + esc(woPurShort(o)) + (o.due ? ' · due ' + esc(woWhen(o.due)) + (woLate(o) ? ' (late)' : '') : '') + '</small></span></div>' +
+      '<div class="pl"><span>Where the order\'s nets are<small>' + esc(woProgress(o)) + '</small></span></div></div>' +
+      (n ? '<button type="button" class="btn" data-chk-net="' + n.id + '">See ' + esc(netLabel(n)) + ' in stock</button>' : '') + chkFoot() + '</div>';
+    el.hidden = false; document.body.classList.add('pop-on');
+    chkWire(el);
+  }
+  function chkCam() {
+    if (!window.ArmorXCam) return;
+    chk.ok = false; chk.cam = ''; chk.camCls = '';
+    window.ArmorXCam.open(function (c) { chk.ok = chkCode(c); }, { keep: function () { return !chk.ok; },
+      msg: function () { return { p: 'Check: scan a box label or a net label', f: chk.cam || 'Point the camera at a label', c: chk.camCls }; } });
+  }
+  function checkBtn(id) { return '<button type="button" class="btn chkBtn" id="' + id + '">Check a box</button>'; }
 
   // ---------- refill list (every 3-4 days, from the top of the racks) ----------
   function viewRefill() {
@@ -2823,7 +2964,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
       return i.type !== 'file' && i.type !== 'checkbox' && i.id !== 'scanIn' && i.id !== 'q' && i.id !== 'rq' && i.value !== i.defaultValue;
     });
     var picked = Array.prototype.some.call(app.querySelectorAll('select'), function (sel) { var o = sel.options[sel.selectedIndex]; return o && !o.defaultSelected && sel.selectedIndex !== 0; });
-    return typed || picked || !!app.querySelector('#cntBar:not([hidden]), #bcApply, #xlPrev table, #snOut table, #boxInfo:not([hidden]), #pFinal button, [data-pin] + input, td > .pin-in');
+    return typed || picked || !!app.querySelector('#cntBar:not([hidden]), #bcApply, #xlPrev table, #snOut table, #boxInfo:not([hidden]), #chk:not([hidden]), #pFinal button, [data-pin] + input, td > .pin-in');
   }
   // Pages that only show numbers are redrawn when new data comes in; the scan station and forms are never redrawn by it.
   var LIVE_PAGES = ['dashboard', 'stock', 'racks', 'refill', 'log', 'pick', 'production'];
@@ -2839,7 +2980,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
   // once nobody is in the middle of something. Unsent scans and all data are saved on the phone, so a reload loses nothing.
   // Release rule: bump APP_V here, in version.json and in the ?v= tags in index.html (tests/check-data.js checks they match).
   // The number = Google Sheet script version (14) + app update (.1, .2 ...).
-  var APP_V = '14.2', newV = null, lastTouch = Date.now();
+  var APP_V = '14.3', newV = null, lastTouch = Date.now();
   ['pointerdown', 'keydown'].forEach(function (ev) { document.addEventListener(ev, function () { lastTouch = Date.now(); }, true); });
   function appIdle() { // nothing typed, camera closed, not saving, and no step open (or nobody touched the phone for 2 minutes)
     var open = sess.mode || sess.await || sess.woc || document.querySelector('#adjust .act, #adjust input');
@@ -2909,6 +3050,7 @@ var ARMORX_SHEET = { url: 'https://script.google.com/macros/s/AKfycbzqgIpFXyYFOn
     if (!VIEWS[k] || !can(NEED[k] || 'Worker') || (k === 'orders' && !canOrders())) { k = can('Manager') && !TOUCH ? 'dashboard' : 'scan'; history.replaceState(null, '', location.pathname + location.search + '#' + k); }
     document.querySelectorAll('#tabs a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + k); });
     VIEWS[k]();
+    var cb = app.querySelector('.chkBtn'); if (cb) cb.onclick = function (e) { e.stopPropagation(); openCheck(); }; // Check: Scan station, Rack map, Dashboard
     paintSync();
   }
   window.addEventListener('hashchange', route);
