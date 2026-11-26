@@ -27,7 +27,9 @@ window.HELP_QA = [
   { t: 'Rack map', q: 'What is the small number on a box in the Rack map?', k: 'number tile count box shows',
     a: 'It is how many nets the app has in that box right now. No number means nobody has put nets in or counted that box in the app yet.' },
   { t: 'Rack map', q: 'I tapped a box. What do the numbers mean?', k: 'tap box info pop-up popup summary table in this box room on top of racks not in a box total out today boxes meaning columns',
-    a: 'Tapping a box opens a summary in front of the screen. Tap <b>Close</b> (or outside it) to go back. First the <b>Total in stock</b>, then one line for each place the nets sit. The lines always add up to the total.<br>Example: total <b>488</b>.<ul><li><b>Pick box AR-C4-R3</b> · 13: nets in that box now. "a full box holds 20" is the box size, not the space left. A dash (—) means no number yet.</li><li><b>Backup box</b> (210x100 only): nets in each backup box.</li><li><b>On top of the racks</b> · 475: "19 full boxes" means 19 boxes of 25 on top; "+ 1 part box (22)" is a box that is not full.</li><li><b>On the pick list</b> (minus): nets on a final pick list. They are already off stock but still in the box until they are picked.</li><li><b>Not in a box</b>: stock the app knows about but cannot place in a box or on top yet. Only shows when there is some.</li><li><b>Adds up to</b>: the lines added together. It is the same as the total.</li></ul>Below: <b>Ready to pick on the racks</b> (the boxes, not the top), and <b>Out today</b>.' },
+    a: 'Tapping a box opens a summary in front of the screen. Tap <b>Close</b> (or outside it) to go back. First the <b>Total in stock</b>, then one line for each place the nets sit. The lines always add up to the total.<br>Example: total <b>488</b>.<ul><li><b>Pick box AR-C4-R3</b> · 13: nets in that box now. "a full box holds 20" is the box size, not the space left. A dash (—) means no number yet.</li><li><b>Backup box</b> (210x100 only): nets in each backup box.</li><li><b>On top of the racks</b> · 475: "19 full boxes" means 19 boxes of 25 on top; "+ 1 part box (22)" is a box that is not full.</li><li><b>On the pick list</b> (minus): nets on a final pick list. They are already off stock but still in the box until they are picked.</li><li><b>Not in a box</b>: stock the app knows about but cannot place in a box or on top yet. Only shows when there is some.</li><li><b>Adds up to</b>: the lines added together. It is the same as the total.</li></ul>Below: <b>Ready to pick on the racks</b> (the boxes, not the top), and <b>Out today</b>. Then <b>In production</b>: nets of this size and color in work orders, by step (not in stock yet), and <b>Packed, not in stock</b> (ready for FBA, bulk buyer or hold), when there are some.' },
+  { t: 'Rack map', q: 'How do I quickly check a box?', k: 'check a box look see find quick scan label summary what is in this box how many top backup production without rack map',
+    a: 'Tap <b>Check a box</b> (Scan station, Rack map or Dashboard). The camera opens: scan the <b>box label</b> and you see the same summary as tapping the box on the Rack map: the box, backups, top of the racks, in production and the total.<ul><li>No camera? Type the size (e.g. <b>230x140</b>) and tap the color, or type the box code.</li><li>Scan a <b>net label</b> (WOMQD…) to see where that net and its order are now.</li><li>Tap <b>Next</b> to check the next box.</li></ul>Check never changes anything. With no internet it shows the last numbers the phone got, with their time.' },
   { t: 'Rack map', q: 'What does "box holds 20" (or "room for 20") mean?', k: 'room capacity full box holds size space left 20',
     a: '<b>Box holds 20</b> means a full box holds 20 nets of this size. It is the box size, not the space left. If the box has 9, there is space for 11 more. When the box reaches 20, the app says <b>box is full</b>: put the rest on TOP.' },
   { t: 'Rack map', q: 'What does "On top of the racks" mean?', k: 'on top of the rack top extra full box part box',
@@ -231,8 +233,8 @@ window.HELP_SHEET = [
     ['Pick from boxes', 'Never from the top. Pick list short? Keep (bring down from top), Cut to the box, or Remove.'],
     ['Older mistakes', 'Ask a manager to change the box number on the Rack map.'] ] },
   { h: 'Pages', rows: [
-    ['Scan station', 'IN and OUT. Managers: Box recount.'],
-    ['Rack map', 'Every box. Tap one for its summary. Find a size.'],
+    ['Scan station', 'IN and OUT. Check a box: scan a label to see it, nothing changes. Managers: Box recount.'],
+    ['Rack map', 'Every box. Tap one for its summary, or Check a box and scan its label. Find a size.'],
     ['Refill list', 'Empty boxes to fill, nets running low.'],
     ['Work orders', 'Managers: make orders, print labels, fix nets.'],
     ['Production', 'Managers: who did what, where nets pile up, monthly download.'],
@@ -283,6 +285,10 @@ window.HELP_TIPS = {
     ['What it does', 'Counts what is really in each box, to fix the numbers.'],
     ['What you type', 'Scan the shelf label, type how many are in it (0 if none). TOP: full boxes and part boxes.'],
     ['What changes', 'Nothing yet. Stock changes when the manager presses Apply on the Stock page.']] },
+  LOOK: { h: 'Check a box', more: 'How do I quickly check a box?', lines: [
+    ['What it does', 'Shows everything about a box: the box, top of the racks, in production, the total.'],
+    ['What you do', 'Scan the box label, or type the size and tap the color. A net label shows where that net is.'],
+    ['What changes', 'Nothing. It only shows. Tap <b>Next</b> for the next box.']] },
   CHECK: { h: 'Check before saving', more: 'What does Check before saving do', lines: [
     ['What it does', 'Shows what will change before anything is saved, like <b>Top 450 → 500</b>.'],
     ['What you do', 'Tap <b>Yes, save</b> if it is right, or <b>Back</b> to change it.'],

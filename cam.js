@@ -23,6 +23,7 @@
   }
 
   function mirror() {
+    if (opts.msg) { var m = opts.msg(); prompt.innerHTML = m.p || ''; msg.textContent = m.f || ''; msg.className = 'cam-msg ' + (m.c || ''); return; } // Check: its own words, not the Scan station's
     var p = document.getElementById('prompt'), f = document.getElementById('fb');
     if (p) prompt.innerHTML = p.innerHTML;
     if (f) { msg.innerHTML = f.innerHTML; msg.className = 'cam-msg ' + f.className.replace('feedback', '').trim(); }

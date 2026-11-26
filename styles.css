@@ -566,3 +566,17 @@ label.chk input{width:20px;height:20px;flex:none;margin-top:1px}
 .wo-apart .wo-ag{border-top:1px solid var(--line);padding:6px 0}
 .wo-apart .wo-ag:first-of-type{border-top:none}
 .wo-form .wide{grid-column:1 / -1}
+/* Check (owner 26 Nov 2026): look at a box without changing anything */
+.chk-w{display:flex;align-items:center;gap:8px}
+.chk-w .chkBtn{flex:1}
+.chkBtn{font-weight:700}
+.scanbox .chkBtn{font-family:var(--f-display);font-size:1.25rem;padding:12px;background:var(--surface);color:var(--ink);border-color:var(--surface)}
+.scanbox .chk-w .ibtn{color:#cfd6db}
+.chk-asof{background:var(--soft-warn);border-left:4px solid var(--warn);padding:6px 10px;border-radius:3px;font-size:.9rem}
+.chk-msg{font-size:.95rem;min-height:1.2em}
+.chk-msg.bad{color:var(--bad);font-weight:600}
+.chk-card .pop-net .ibtn{font-size:1rem}
+.chk-sizes{justify-content:flex-start}
+.pop-prod .pl{border-bottom-style:dashed}
+.pop-x2{position:sticky;bottom:0;margin:0 -16px;width:calc(100% + 32px);display:grid;grid-template-columns:1fr 1fr}
+.pop-x2 .btn{font-size:1.25rem;padding:16px;border-radius:0}
